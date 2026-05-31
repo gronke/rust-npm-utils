@@ -1,0 +1,2 @@
+# Vendored at runtime by `cargo run -p date-converter`.
+/web/web_modules/

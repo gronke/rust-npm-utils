@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>date-converter — rust-npm-utils demo</title>
+
+    <!-- Web Components polyfill, loaded as a *fallback*: the loader feature-detects
+         and only fetches polyfill bundles on browsers that lack native support. -->
+    <script src="/web_modules/@webcomponents/webcomponentsjs/webcomponents-loader.js"></script>
+
+    <!-- Bare-specifier resolution for the vendored modules. Mirrors the entry
+         points each package publishes. -->
+    <script type="importmap">
+      {
+        "imports": {
+          "lit": "/web_modules/lit/index.js",
+          "lit/": "/web_modules/lit/",
+          "lit-html": "/web_modules/lit-html/lit-html.js",
+          "lit-html/": "/web_modules/lit-html/",
+          "lit-element/": "/web_modules/lit-element/",
+          "@lit/reactive-element": "/web_modules/@lit/reactive-element/reactive-element.js",
+          "@lit/": "/web_modules/@lit/",
+          "temporal-polyfill": "/web_modules/temporal-polyfill/index.js"
+        }
+      }
+    </script>
+
+    <script type="module" src="/date-converter.js"></script>
+    <style>
+      body {
+        font: 16px/1.5 system-ui, sans-serif;
+        max-width: 40rem;
+        margin: 3rem auto;
+        padding: 0 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Date converter</h1>
+    <p>
+      A tiny <a href="https://lit.dev">Lit</a> element that converts a wall-clock
+      time between time zones using the <code>Temporal</code> API — all
+      dependencies vendored from npm by
+      <a href="https://github.com/gronke/rust-npm-utils">rust-npm-utils</a>, no
+      Node or bundler involved.
+    </p>
+    <date-converter></date-converter>
+  </body>
+</html>
