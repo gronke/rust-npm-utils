@@ -9,17 +9,13 @@ browser dependencies (`lit` and its closure, the Web Components polyfill, and th
 ## Run
 
 ```sh
-# 1. Resolve + download + extract the browser deps into web/web_modules/
 cargo run -p date-converter
-
-# 2. Serve the web/ directory (any static server) and open the page
-python3 -m http.server -d examples/date-converter/web 8080
-# open http://localhost:8080/
+# Vendors the browser deps, then serves the page (Axum) at http://127.0.0.1:8080/
 ```
 
 ## How it works
 
-`src/main.rs` is the whole integration:
+`src/main.rs` vendors the deps, then serves `web/` over a small Axum `ServeDir`:
 
 - `Registry::npm().resolve(pkg, &req)` picks the newest version matching a semver
   range and returns its tarball URL,
