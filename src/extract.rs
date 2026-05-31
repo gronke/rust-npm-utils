@@ -62,18 +62,14 @@ pub fn tar_gz(
         let is_dir = entry_type.is_dir();
         if is_dir {
             if matches!(select, Select::All) {
-                if let Some(out) = safe_join(dest, rel) {
-                    create_dir_all(out)?;
-                }
+                create_dir_all(safe_join(dest, rel)?)?;
             }
             continue;
         }
         let Some(dest_rel) = select.dest_for(rel) else {
             continue;
         };
-        let Some(out) = safe_join(dest, &dest_rel) else {
-            continue;
-        };
+        let out = safe_join(dest, &dest_rel)?;
         if let Some(parent) = out.parent() {
             create_dir_all(parent)?;
         }
@@ -101,7 +97,7 @@ pub fn zip(
         }
         let name = match file.enclosed_name() {
             Some(n) => n.to_string_lossy().into_owned(),
-            None => continue,
+            None => return Err("unsafe zip entry name (escapes destination)".into()),
         };
         let rel = strip(&name, strip_prefix);
         if rel.is_empty() {
@@ -110,9 +106,7 @@ pub fn zip(
         let Some(dest_rel) = select.dest_for(rel) else {
             continue;
         };
-        let Some(out) = safe_join(dest, &dest_rel) else {
-            continue;
-        };
+        let out = safe_join(dest, &dest_rel)?;
         if let Some(parent) = out.parent() {
             create_dir_all(parent)?;
         }
@@ -131,21 +125,27 @@ fn strip<'a>(path: &'a str, prefix: Option<&str>) -> &'a str {
     }
 }
 
-/// Join `relative` onto `base`, rejecting empty paths and anything that would
-/// escape `base` (`..`, absolute, or a drive/root prefix). Returns `None` for
-/// an unsafe path so the caller skips it.
-fn safe_join(base: &Path, relative: &str) -> Option<PathBuf> {
+/// Join `relative` onto `base`, returning an error for an empty path or anything
+/// that would escape `base` (`..`, absolute, or a drive/root prefix). Extraction
+/// aborts on such an entry rather than silently skipping it, so a malicious or
+/// malformed archive fails loudly instead of being partially written.
+fn safe_join(base: &Path, relative: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let reject = || -> Box<dyn std::error::Error> {
+        format!("unsafe archive entry path: {relative:?}").into()
+    };
     if relative.is_empty() || relative.contains("..") {
-        return None;
+        return Err(reject());
     }
     let path = Path::new(relative);
     for component in path.components() {
         match component {
-            Component::ParentDir | Component::Prefix(_) | Component::RootDir => return None,
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
+                return Err(reject())
+            }
             _ => {}
         }
     }
-    Some(base.join(relative))
+    Ok(base.join(relative))
 }
 
 #[cfg(test)]
@@ -228,10 +228,21 @@ mod tests {
     #[test]
     fn safe_join_rejects_escapes() {
         let base = Path::new("/tmp/base");
-        assert!(safe_join(base, "../escape").is_none());
-        assert!(safe_join(base, "/abs").is_none());
-        assert!(safe_join(base, "a/../b").is_none());
-        assert!(safe_join(base, "").is_none());
-        assert!(safe_join(base, "a/b.js").is_some());
+        assert!(safe_join(base, "../escape").is_err());
+        assert!(safe_join(base, "/abs").is_err());
+        assert!(safe_join(base, "a/../b").is_err());
+        assert!(safe_join(base, "").is_err());
+        assert!(safe_join(base, "a/b.js").is_ok());
+    }
+
+    #[test]
+    fn tar_gz_errors_when_selection_escapes_dest() {
+        // Benign archive, but the selection maps an entry to a path that escapes
+        // `dest` — extraction must abort, not silently skip.
+        let tgz = make_tar_gz(&[("package/x.js", b"x")]);
+        let tmp = tempdir().unwrap();
+        let escape = |_rel: &str| -> Option<String> { Some("../escape.js".to_string()) };
+        let result = tar_gz(&tgz, tmp.path(), Some("package/"), Select::Matching(&escape));
+        assert!(result.is_err(), "extraction must error when a dest escapes");
     }
 }

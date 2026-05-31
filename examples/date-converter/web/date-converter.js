@@ -1,15 +1,12 @@
 import { LitElement, html, css } from 'lit';
 import { Temporal } from 'temporal-polyfill';
 
-const ZONES = [
-  'Europe/Berlin',
-  'Europe/London',
-  'America/New_York',
-  'America/Los_Angeles',
-  'Asia/Tokyo',
-  'Australia/Sydney',
-  'UTC',
-];
+// The full IANA time-zone list, straight from the runtime, with a small
+// fallback for older engines that lack `Intl.supportedValuesOf`.
+const ZONES =
+  typeof Intl.supportedValuesOf === 'function'
+    ? Intl.supportedValuesOf('timeZone')
+    : ['UTC', 'Europe/Berlin', 'America/New_York', 'Asia/Tokyo'];
 
 /// Converts a wall-clock date-time from one IANA time zone to another using
 /// `Temporal.PlainDateTime` → `ZonedDateTime` → `withTimeZone`.
