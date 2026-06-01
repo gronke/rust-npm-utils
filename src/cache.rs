@@ -39,7 +39,7 @@ pub fn with_lock<F: FnOnce() -> R, R>(lock_path: &Path) -> impl FnOnce(F) -> R {
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     if start.elapsed() > max_wait {
                         eprintln!(
-                            "rust-npm-utils: lock at {} held for {}s — assuming stale and continuing",
+                            "npm-utils: lock at {} held for {}s — assuming stale and continuing",
                             lock_path.display(),
                             start.elapsed().as_secs()
                         );
@@ -49,7 +49,7 @@ pub fn with_lock<F: FnOnce() -> R, R>(lock_path: &Path) -> impl FnOnce(F) -> R {
                     std::thread::sleep(Duration::from_millis(200));
                 }
                 Err(e) => panic!(
-                    "rust-npm-utils: failed to acquire lock at {}: {}",
+                    "npm-utils: failed to acquire lock at {}: {}",
                     lock_path.display(),
                     e
                 ),

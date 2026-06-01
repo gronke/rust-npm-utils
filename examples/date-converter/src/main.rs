@@ -1,4 +1,4 @@
-//! Vendors this demo's browser dependencies with `rust-npm-utils` — no Node, no
+//! Vendors this demo's browser dependencies with `npm-utils` — no Node, no
 //! npm — then serves the page over a small Axum static server.
 //!
 //! Resolves each package against the npm registry, downloads its tarball, and
@@ -12,7 +12,7 @@
 //! # then open the printed http://127.0.0.1:8080/
 //! ```
 
-use rust_npm_utils::{download, extract, registry::Registry};
+use npm_utils::{download, extract, registry::Registry};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::path::Path;

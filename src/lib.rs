@@ -15,7 +15,7 @@
 //! - [`package_json`] — read pinned dependency versions from a `package.json`.
 //!
 //! ```no_run
-//! use rust_npm_utils::{download, extract, registry::Registry};
+//! use npm_utils::{download, extract, registry::Registry};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let reg = Registry::npm();

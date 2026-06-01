@@ -22,7 +22,7 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
             Ok(body) => return Ok(body),
             Err(e) if attempt < attempts => {
                 eprintln!(
-                    "rust-npm-utils: download attempt {attempt}/{attempts} failed for {url}: {e}; \
+                    "npm-utils: download attempt {attempt}/{attempts} failed for {url}: {e}; \
                      retrying in 500ms"
                 );
                 std::thread::sleep(Duration::from_millis(500));

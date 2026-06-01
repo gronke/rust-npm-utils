@@ -242,7 +242,12 @@ mod tests {
         let tgz = make_tar_gz(&[("package/x.js", b"x")]);
         let tmp = tempdir().unwrap();
         let escape = |_rel: &str| -> Option<String> { Some("../escape.js".to_string()) };
-        let result = tar_gz(&tgz, tmp.path(), Some("package/"), Select::Matching(&escape));
+        let result = tar_gz(
+            &tgz,
+            tmp.path(),
+            Some("package/"),
+            Select::Matching(&escape),
+        );
         assert!(result.is_err(), "extraction must error when a dest escapes");
     }
 }

@@ -1,10 +1,10 @@
 # date-converter
 
-A runnable demo of `rust-npm-utils`: a small [Lit](https://lit.dev) web component
+A runnable demo of `npm-utils`: a small [Lit](https://lit.dev) web component
 that converts a wall-clock time between time zones using the `Temporal` API. Its
 browser dependencies (`lit` and its closure, the Web Components polyfill, and the
 `Temporal` polyfill) are vendored straight from the npm registry by
-`rust-npm-utils` — **no Node, npm, or bundler**.
+`npm-utils` — **no Node, npm, or bundler**.
 
 ## Run
 
@@ -25,5 +25,5 @@ cargo run -p date-converter
 
 `web/index.html` maps the bare specifiers (`lit`, `temporal-polyfill`, …) to those
 files via an importmap and loads the Web Components polyfill as a fallback.
-`web/date-converter.js` is the Lit element (plain JS — `rust-npm-utils` fetches
+`web/date-converter.js` is the Lit element (plain JS — `npm-utils` fetches
 dependencies, it does not compile TypeScript).

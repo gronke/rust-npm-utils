@@ -1,4 +1,4 @@
-# rust-npm-utils
+# npm-utils
 
 Pure-Rust utilities for the **npm registry** and web assets — resolve a package
 version, download npm tarballs and GitHub archives, and extract files. No Node or
@@ -20,7 +20,7 @@ vendor browser/JS dependencies into your own asset tree.
 ## Example
 
 ```rust,no_run
-use rust_npm_utils::{download, extract, registry::Registry};
+use npm_utils::{download, extract, registry::Registry};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let reg = Registry::npm();

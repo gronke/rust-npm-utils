@@ -1,5 +1,5 @@
 [package]
-name = "rust-npm-utils"
+name = "npm-utils"
 version = "0.1.0"
 authors = ["Stefan Grönke <stefan@gronke.net>"]
 homepage = "https://github.com/gronke/rust-npm-utils"
