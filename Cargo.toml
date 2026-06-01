@@ -10,7 +10,8 @@ keywords = ["npm", "registry", "tarball", "download"]
 license = "MIT"
 edition = "2021"
 rust-version = "1.77.2"
-publish = false
+include = ["src/**/*.rs", "Cargo.toml", "README.md", "LICENSE"]
+publish = true
 
 [dependencies]
 ureq = { version = "3.0", features = ["rustls"], default-features = false }
