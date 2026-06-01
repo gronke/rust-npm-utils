@@ -58,8 +58,11 @@ class DateConverter extends LitElement {
       const target = source.withTimeZone(this.to);
       const fmt = (z) =>
         z.toLocaleString('en-US', {
-          dateStyle: 'medium',
-          timeStyle: 'short',
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
           timeZoneName: 'short',
         });
       return `${fmt(source)}\n→ ${fmt(target)}`;
