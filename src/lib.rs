@@ -12,7 +12,9 @@
 //!   path-traversal protection.
 //! - [`cache`] — content-hash markers, a cross-process build lock, and directory
 //!   helpers for skip-if-unchanged download caches.
-//! - [`package_json`] — read pinned dependency versions from a `package.json`.
+//! - [`package_json`] — read pinned dependency versions from a `package.json`, and
+//!   resolve its `exports`/`module`/`browser`/`main` to browser entry points (for
+//!   generating an ES-module import map).
 //!
 //! ```no_run
 //! use npm_utils::{download, extract, registry::Registry};
