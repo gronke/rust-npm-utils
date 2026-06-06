@@ -15,6 +15,8 @@
 //! - [`package_json`] — read pinned dependency versions from a `package.json`, and
 //!   resolve its `exports`/`module`/`browser`/`main` to browser entry points (for
 //!   generating an ES-module import map).
+//! - [`install`] — resolve a `package.json`'s transitive dependency graph and extract
+//!   the tree into a `node_modules/` directory (a minimal, pure-Rust "npm install").
 //!
 //! ```no_run
 //! use npm_utils::{download, extract, registry::Registry};
@@ -30,5 +32,6 @@
 pub mod cache;
 pub mod download;
 pub mod extract;
+pub mod install;
 pub mod package_json;
 pub mod registry;
