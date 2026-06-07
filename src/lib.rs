@@ -17,8 +17,10 @@
 //! - [`package_json`] — read pinned dependency versions from a `package.json`, and
 //!   resolve its `exports`/`module`/`browser`/`main` to browser entry points (for
 //!   generating an ES-module import map).
-//! - [`install`] — resolve a `package.json`'s transitive dependency graph and extract
-//!   the tree into a `node_modules/` directory (a minimal, pure-Rust "npm install").
+//! - [`install`] — produce a real `node_modules/` directory, pure Rust: resolve a
+//!   `package.json`'s transitive `dependencies` ([`install::node_modules`]), or install the
+//!   exact tree a `package-lock.json` pins — devDependencies included, sha512-verified, `.bin`
+//!   shims and all — an `npm ci` in Rust ([`install::from_lockfile`]).
 //!
 //! ```no_run
 //! use npm_utils::{download, extract, registry::Registry};
