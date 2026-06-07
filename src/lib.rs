@@ -10,6 +10,8 @@
 //! - [`extract`] — unpack `.tar.gz` and `.zip` archives into a destination
 //!   directory, selecting all files, an explicit file map, or a predicate, with
 //!   path-traversal protection.
+//! - [`path_safety`] — the path-traversal hardening shared by `extract` and
+//!   `install`: reject `..`/absolute paths and refuse symlink-redirected writes.
 //! - [`cache`] — content-hash markers, a cross-process build lock, and directory
 //!   helpers for skip-if-unchanged download caches.
 //! - [`package_json`] — read pinned dependency versions from a `package.json`, and
@@ -34,4 +36,5 @@ pub mod download;
 pub mod extract;
 pub mod install;
 pub mod package_json;
+pub mod path_safety;
 pub mod registry;
