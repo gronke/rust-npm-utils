@@ -1,9 +1,10 @@
 # npm-utils
 
 Pure-Rust utilities for the **npm registry** and web assets — resolve a package
-version, download npm tarballs and GitHub archives, and extract files. No Node or
-npm at build time; just `ureq` + archive extraction. Handy from a `build.rs` to
-vendor browser/JS dependencies into your own asset tree.
+version, download npm tarballs and GitHub archives, extract files, and install a
+real `node_modules/` from a `package.json` or `package-lock.json`. No Node or npm
+at build time; just `ureq` + archive extraction. Handy from a `build.rs` to vendor
+browser/JS dependencies into your own asset tree.
 
 ## Modules
 
@@ -16,8 +17,18 @@ vendor browser/JS dependencies into your own asset tree.
 - **`cache`** — content-hash markers, a cross-process `with_lock`, and directory
   helpers for skip-if-unchanged download caches.
 - **`package_json`** — read pinned dependency versions from a `package.json`.
+- **`install`** — produce a real `node_modules/` tree, pure Rust. `node_modules(..)`
+  resolves a `package.json`'s transitive `dependencies` against the registry;
+  `from_lockfile(..)` is an **`npm ci` in Rust** — it installs the *exact* tree a
+  `package-lock.json` (v2/v3) pins, **devDependencies included**, with no semver
+  resolution: each tarball's `sha512` integrity is verified, platform-mismatched optional
+  deps (e.g. darwin-only `fsevents` on Linux) are skipped, and `node_modules/.bin/` shims are
+  created. That installs a project's Node test tooling (Playwright, `tsc`) without `npm` —
+  only the Node runtime is needed to then run it.
 
-## Example
+## Examples
+
+Vendor a single package's browser assets:
 
 ```rust,no_run
 use npm_utils::{download, extract, registry::Registry};
@@ -27,6 +38,18 @@ let reg = Registry::npm();
 let lit = reg.resolve("lit", &"^3".parse()?)?;
 let tgz = download::fetch(&lit.tarball_url)?;
 extract::tar_gz(&tgz, "dist/lit".as_ref(), Some("package/"), extract::Select::All)?;
+# Ok(()) }
+```
+
+Install a committed lockfile's full tree (an `npm ci`, in Rust):
+
+```rust,no_run
+use std::path::Path;
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let project = Path::new("examples/app");
+npm_utils::install::from_lockfile(&project.join("package-lock.json"), project)?;
+// → project/node_modules/ populated + .bin shims; now run `node node_modules/.bin/tsc`.
 # Ok(()) }
 ```
 
