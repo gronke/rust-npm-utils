@@ -11,7 +11,9 @@ license = "MIT"
 edition = "2021"
 rust-version = "1.77.2"
 include = ["src/**/*.rs", "Cargo.toml", "README.md", "LICENSE"]
-publish = true
+# Consumed as a git dependency: it depends on the internal, unpublished `package_json` path
+# crate, so it is not published to crates.io.
+publish = false
 
 [dependencies]
 ureq = { version = "3.0", features = ["rustls"], default-features = false }
