@@ -16,7 +16,12 @@ browser/JS dependencies into your own asset tree.
   explicit `Files` map, or a `Matching` predicate; path-traversal-safe.
 - **`cache`** — content-hash markers, a cross-process `with_lock`, and directory
   helpers for skip-if-unchanged download caches.
-- **`package_json`** — read pinned dependency versions from a `package.json`.
+- **`package_json`** — re-exported from the internal [`package_json`](crates/package_json) crate:
+  the rolled-own npm-format schemas — `package.json` (dependency specs + a browser-favoring
+  `exports` resolver), the `package-spec` grammar (`spec::Spec`), and `package-lock.json` parsing
+  (`lock::Lockfile`) — modeled on the npm specs and held to a strict spec-conformance suite.
+- **`integrity`** — verify a downloaded tarball's `sha512` Subresource-Integrity (both install
+  paths check it before trusting bytes).
 - **`install`** — produce a real `node_modules/` tree, pure Rust, verifying every tarball's
   `sha512` integrity. `node_modules(..)` resolves a `package.json`'s transitive `dependencies`
   against the registry, checking each tarball against the registry's `dist.integrity` like
@@ -26,6 +31,13 @@ browser/JS dependencies into your own asset tree.
   darwin-only `fsevents` on Linux) are skipped, and `node_modules/.bin/` shims are created.
   That installs a project's Node test tooling (Playwright, `tsc`) without `npm` — only the Node
   runtime is needed to then run it.
+
+## Workspace
+
+The npm-format schemas live in an internal `package_json` crate
+([`crates/package_json`](crates/package_json), re-exported as `npm_utils::package_json`), so its
+strict `package.json` / `package-lock.json` spec-conformance tests run on their own CI, independent
+of the rest of `npm-utils`.
 
 ## Examples
 
