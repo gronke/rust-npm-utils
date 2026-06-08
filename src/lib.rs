@@ -22,6 +22,8 @@
 //!   ([`install::node_modules`]), or install the exact tree a `package-lock.json` pins —
 //!   devDependencies included, `.bin` shims and all — an `npm ci` in Rust
 //!   ([`install::from_lockfile`]).
+//! - [`integrity`] — verify a downloaded tarball's `sha512` Subresource-Integrity (both
+//!   install paths check it before trusting bytes).
 //!
 //! ```no_run
 //! use npm_utils::{download, extract, registry::Registry};
@@ -38,6 +40,9 @@ pub mod cache;
 pub mod download;
 pub mod extract;
 pub mod install;
+pub mod integrity;
+// The npm `package.json` / `package-lock.json` schemas — a pure-parsing module (no IO),
+// modeled on the npm specs, with strict spec-conformance tests living beside it.
 pub mod package_json;
 pub mod path_safety;
 pub mod registry;
