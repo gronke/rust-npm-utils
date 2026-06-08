@@ -1,0 +1,32 @@
+name: package_json
+
+# The internal package_json crate carries the strict package.json / package-lock.json
+# spec-conformance tests. They're heavy and self-contained, so run them only when the crate
+# itself changes — not on every npm-utils change (the main CI handles the consumer side).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/package_json/**"
+      - ".github/workflows/package-json.yml"
+  pull_request:
+    paths:
+      - "crates/package_json/**"
+      - ".github/workflows/package-json.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  spec:
+    name: strict spec tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ubuntu-latest ships a stable Rust toolchain with clippy.
+      - name: Clippy
+        run: cargo clippy -p package_json --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test -p package_json
