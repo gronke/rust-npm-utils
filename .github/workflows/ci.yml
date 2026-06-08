@@ -24,3 +24,8 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace
+
+      # The package.json / package-lock.json schemas now live in the `package_json` module
+      # (src/package_json/); run its strict spec-conformance suite as a named gate too.
+      - name: Spec tests (package_json)
+        run: cargo test -p npm-utils package_json::

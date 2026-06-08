@@ -16,7 +16,12 @@ browser/JS dependencies into your own asset tree.
   explicit `Files` map, or a `Matching` predicate; path-traversal-safe.
 - **`cache`** — content-hash markers, a cross-process `with_lock`, and directory
   helpers for skip-if-unchanged download caches.
-- **`package_json`** — read pinned dependency versions from a `package.json`.
+- **`package_json`** — the rolled-own npm-format schemas as a pure-parsing module:
+  `package.json` (dependency specs + a browser-favoring `exports` resolver), the `package-spec`
+  grammar (`spec::Spec`), and `package-lock.json` parsing (`lock::Lockfile`) — modeled on the npm
+  specs and held to a strict spec-conformance suite.
+- **`integrity`** — verify a downloaded tarball's `sha512` Subresource-Integrity (both install
+  paths check it before trusting bytes).
 - **`install`** — produce a real `node_modules/` tree, pure Rust, verifying every tarball's
   `sha512` integrity. `node_modules(..)` resolves a `package.json`'s transitive `dependencies`
   against the registry, checking each tarball against the registry's `dist.integrity` like
