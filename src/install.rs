@@ -2,8 +2,9 @@
 //! directory — a minimal, pure-Rust "npm install".
 //!
 //! [`node_modules`] resolves the dependency graph against the registry (see
-//! [`crate::registry::Registry::resolve_tree`]) and extracts every package into the
-//! conventional flat `node_modules/<name>/` layout (scoped names land at
+//! [`crate::registry::Registry::resolve_tree`]), verifies each downloaded tarball against the
+//! registry's advertised `dist.integrity` (sha512, like `npm install`), and extracts every
+//! package into the conventional flat `node_modules/<name>/` layout (scoped names land at
 //! `node_modules/@scope/<name>/`). It is skip-if-unchanged — a marker keyed on the
 //! resolved version set — and safe under concurrent build scripts via a cross-process
 //! lock.
@@ -30,8 +31,10 @@ use crate::path_safety::{ensure_within, safe_join};
 use crate::registry::{version_req, Registry, Resolved};
 use crate::{cache, download, extract};
 
-/// Resolve `package_json`'s dependencies transitively and extract the flat tree into
-/// `<dest>/node_modules/`. Returns the resolved package set (sorted by name).
+/// Resolve `package_json`'s dependencies transitively, verify each tarball's registry
+/// `dist.integrity` (sha512), and extract the flat tree into `<dest>/node_modules/`. Returns
+/// the resolved package set (sorted by name). A package whose registry metadata advertises no
+/// sha512 integrity is refused rather than installed unverified.
 ///
 /// Skips all work when the resolved version set is unchanged and `node_modules/` is
 /// already populated. Serialized across concurrent invocations by a lock kept beside
@@ -60,6 +63,10 @@ pub fn node_modules(
         cache::clear_directory(&node_modules)?;
         for pkg in &resolved {
             let bytes = download::fetch(&pkg.tarball_url)?;
+            // Verify the registry-advertised sha512 integrity before trusting the bytes, like
+            // `npm install`. A package whose metadata carries no sha512 is refused, not
+            // installed unverified (the same strict stance as `from_lockfile`).
+            verify_integrity(&pkg.name, &bytes, pkg.integrity.as_deref().unwrap_or(""))?;
             let dir = package_dir(&node_modules, &pkg.name)?;
             // Strip the tarball's first path component whatever it's named: npm's own pack
             // uses `package/`, but some published tarballs (e.g. `@types/react` → `react
@@ -167,6 +174,7 @@ pub fn from_lockfile(
                 name: pkg.name,
                 version,
                 tarball_url: pkg.resolved,
+                integrity: Some(pkg.integrity),
             })
         })
         .collect()
@@ -310,9 +318,11 @@ fn constraint_allows(field: Option<&Value>, host: &str) -> bool {
     !has_positive || matched_positive
 }
 
-/// Verify a tarball against the lockfile's Subresource-Integrity string. npm writes
-/// `sha512-<base64>` (occasionally several space-separated algorithms); we require and check
-/// the sha512 digest, like `npm ci`.
+/// Verify a tarball against a Subresource-Integrity string — the `dist.integrity` a registry
+/// packument advertises (used by [`node_modules`]) or the `integrity` a `package-lock.json`
+/// pins (used by [`from_lockfile`]). npm writes `sha512-<base64>` (occasionally several
+/// space-separated algorithms); we require and check the sha512 digest, like
+/// `npm install` / `npm ci`. An integrity string with no sha512 component is an error.
 fn verify_integrity(
     name: &str,
     bytes: &[u8],
@@ -321,12 +331,12 @@ fn verify_integrity(
     let expected = integrity
         .split_whitespace()
         .find_map(|token| token.strip_prefix("sha512-"))
-        .ok_or_else(|| format!("package `{name}`: lockfile entry has no sha512 integrity"))?;
+        .ok_or_else(|| format!("package `{name}`: no sha512 integrity to verify against"))?;
     let actual = base64::engine::general_purpose::STANDARD.encode(Sha512::digest(bytes));
     if actual != expected {
         return Err(format!(
             "package `{name}`: integrity mismatch — the downloaded tarball does not match \
-             the lockfile sha512"
+             the expected sha512"
         )
         .into());
     }
@@ -469,7 +479,10 @@ mod tests {
     #[ignore = "network: hits the npm registry"]
     fn installs_react_with_transitive_scheduler() {
         // Real install of the React-showcase deps. react-dom depends on scheduler, so a
-        // correct transitive resolve produces all three under node_modules/.
+        // correct transitive resolve produces all three under node_modules/. Each tarball's
+        // registry sha512 integrity is also verified end-to-end here — a mismatch would fail
+        // the install. (Tamper-rejection itself is covered offline by
+        // `verify_integrity_checks_sha512_and_rejects_tampering`, shared by both install paths.)
         let tmp = tempdir().unwrap();
         let pkg = tmp.path().join("package.json");
         std::fs::write(
