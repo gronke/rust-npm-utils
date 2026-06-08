@@ -20,6 +20,8 @@ tar = "0.4"
 zip = { version = "7", default-features = false, features = ["deflate", "time"] }
 serde_json = "1"
 semver = "1"
+# Internal workspace crate: the rolled-own npm package.json + package-lock.json schemas.
+package_json = { path = "crates/package_json" }
 # Verify each downloaded tarball's `sha512-<base64>` integrity — the registry's `dist.integrity`
 # (`install::node_modules`) and the hash pinned in a package-lock.json (`install::from_lockfile`).
 # npm-install / npm-ci-faithful. Small, widely-trusted crates, MSRV ≤ 1.77.2.
