@@ -30,4 +30,4 @@ base64 = "0.22"
 tempfile = "3"
 
 [workspace]
-members = ["examples/date-converter"]
+members = ["crates/package_json", "examples/date-converter"]
