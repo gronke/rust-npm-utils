@@ -17,14 +17,15 @@ browser/JS dependencies into your own asset tree.
 - **`cache`** — content-hash markers, a cross-process `with_lock`, and directory
   helpers for skip-if-unchanged download caches.
 - **`package_json`** — read pinned dependency versions from a `package.json`.
-- **`install`** — produce a real `node_modules/` tree, pure Rust. `node_modules(..)`
-  resolves a `package.json`'s transitive `dependencies` against the registry;
-  `from_lockfile(..)` is an **`npm ci` in Rust** — it installs the *exact* tree a
-  `package-lock.json` (v2/v3) pins, **devDependencies included**, with no semver
-  resolution: each tarball's `sha512` integrity is verified, platform-mismatched optional
-  deps (e.g. darwin-only `fsevents` on Linux) are skipped, and `node_modules/.bin/` shims are
-  created. That installs a project's Node test tooling (Playwright, `tsc`) without `npm` —
-  only the Node runtime is needed to then run it.
+- **`install`** — produce a real `node_modules/` tree, pure Rust, verifying every tarball's
+  `sha512` integrity. `node_modules(..)` resolves a `package.json`'s transitive `dependencies`
+  against the registry, checking each tarball against the registry's `dist.integrity` like
+  `npm install`; `from_lockfile(..)` is an **`npm ci` in Rust** — it installs the *exact* tree
+  a `package-lock.json` (v2/v3) pins, **devDependencies included**, with no semver resolution:
+  each tarball's pinned `sha512` integrity is verified, platform-mismatched optional deps (e.g.
+  darwin-only `fsevents` on Linux) are skipped, and `node_modules/.bin/` shims are created.
+  That installs a project's Node test tooling (Playwright, `tsc`) without `npm` — only the Node
+  runtime is needed to then run it.
 
 ## Examples
 
