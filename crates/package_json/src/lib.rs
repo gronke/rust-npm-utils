@@ -7,9 +7,17 @@
 //! separately. The crate parses and resolves — it never writes files, hits the network,
 //! or resolves untrusted paths — so its strict spec-conformance tests run in isolation.
 //!
-//! Today: `package.json` — its `dependencies` specs and a browser-favoring
-//! conditional-`exports` resolver (enough of Node's algorithm to build an ES-module
-//! import map).
+//! Three pieces:
+//!
+//! - this crate root: `package.json` — its `dependencies` specs and a browser-favoring
+//!   conditional-`exports` resolver (enough of Node's algorithm to build an ES-module
+//!   import map).
+//! - [`spec`] — the npm "package spec" dependency grammar ([`spec::Spec`]) and
+//!   [`spec::version_req`].
+//! - [`lock`] — `package-lock.json` (v2/v3) parsing into a faithful [`lock::Lockfile`].
+
+pub mod lock;
+pub mod spec;
 
 use serde_json::Value;
 use std::collections::HashMap;
