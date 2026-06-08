@@ -38,6 +38,8 @@ pub mod cache;
 pub mod download;
 pub mod extract;
 pub mod install;
-pub mod package_json;
+// The npm `package.json` / `package-lock.json` schemas live in the internal
+// `package_json` workspace crate, re-exported so `npm_utils::package_json` resolves.
+pub use package_json;
 pub mod path_safety;
 pub mod registry;
