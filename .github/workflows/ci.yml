@@ -19,8 +19,11 @@ jobs:
       - name: Formatting
         run: cargo fmt --all --check
 
+      # The package_json crate has its own workflow (package-json.yml) running its strict
+      # spec suite; exclude it here so that suite isn't re-run on every npm-utils change. The
+      # crate is still compiled (npm-utils depends on it), so a breaking change is still caught.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude package_json --all-targets -- -D warnings
 
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude package_json
