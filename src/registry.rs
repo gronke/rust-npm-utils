@@ -18,12 +18,21 @@ impl Default for Registry {
     }
 }
 
-/// A resolved package version: the exact version plus the tarball to fetch.
+/// A resolved package version: the exact version, the tarball to fetch, and the
+/// registry's `dist.integrity` SRI for that tarball (when the packument publishes one).
+///
+/// `#[non_exhaustive]` so further fields can be added without a breaking change — this
+/// type is only ever *constructed* inside the crate; callers receive and read it.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Resolved {
     pub name: String,
     pub version: Version,
     pub tarball_url: String,
+    /// The registry's Subresource-Integrity hash (`sha512-<base64>`), when the packument
+    /// carries one — verified against the downloaded bytes before extraction. `None` for a
+    /// synthesized tarball URL or a packument entry without `dist.integrity`.
+    pub integrity: Option<String>,
 }
 
 impl Registry {
@@ -65,13 +74,14 @@ impl Registry {
         req: &VersionReq,
     ) -> Result<Resolved, Box<dyn std::error::Error>> {
         let doc = self.packument(name)?;
-        let (version, tarball) = select_version(&doc, req)
+        let (version, tarball, integrity) = select_version(&doc, req)
             .ok_or_else(|| format!("no published version of {name} matches {req}"))?;
         let tarball_url = tarball.unwrap_or_else(|| self.tarball_url(name, &version.to_string()));
         Ok(Resolved {
             name: name.to_string(),
             version,
             tarball_url,
+            integrity,
         })
     }
 
@@ -124,7 +134,7 @@ impl Registry {
                 packuments.insert(name.clone(), doc);
             }
             let doc = &packuments[&name];
-            let (version, tarball) = select_version(doc, &req)
+            let (version, tarball, integrity) = select_version(doc, &req)
                 .ok_or_else(|| format!("no published version of {name} matches {req}"))?;
             let deps = dependencies_of(doc, &version);
             let tarball_url =
@@ -144,6 +154,7 @@ impl Registry {
                     name,
                     version,
                     tarball_url,
+                    integrity,
                 },
             );
         }
@@ -154,11 +165,14 @@ impl Registry {
 }
 
 /// Pick the newest version in a packument's `versions` map that satisfies `req`,
-/// returning it with the `dist.tarball` URL the registry advertises (if any).
-/// Factored out for unit testing without network access.
-fn select_version(doc: &Value, req: &VersionReq) -> Option<(Version, Option<String>)> {
+/// returning it with the `dist.tarball` URL and the `dist.integrity` SRI the registry
+/// advertises (each `None` if absent). Factored out for unit testing without network access.
+fn select_version(
+    doc: &Value,
+    req: &VersionReq,
+) -> Option<(Version, Option<String>, Option<String>)> {
     let versions = doc.get("versions")?.as_object()?;
-    let mut best: Option<(Version, Option<String>)> = None;
+    let mut best: Option<(Version, Option<String>, Option<String>)> = None;
     for (ver_str, meta) in versions {
         let Ok(ver) = Version::parse(ver_str) else {
             continue;
@@ -166,13 +180,14 @@ fn select_version(doc: &Value, req: &VersionReq) -> Option<(Version, Option<Stri
         if !req.matches(&ver) {
             continue;
         }
-        if best.as_ref().map(|(b, _)| ver > *b).unwrap_or(true) {
-            let tarball = meta
-                .get("dist")
-                .and_then(|d| d.get("tarball"))
-                .and_then(|t| t.as_str())
-                .map(str::to_string);
-            best = Some((ver, tarball));
+        if best.as_ref().map(|(b, _, _)| ver > *b).unwrap_or(true) {
+            let dist = meta.get("dist");
+            let string_at = |key: &str| {
+                dist.and_then(|d| d.get(key))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            };
+            best = Some((ver, string_at("tarball"), string_at("integrity")));
         }
     }
     best
@@ -231,14 +246,31 @@ mod tests {
         let doc = json!({
             "versions": {
                 "3.1.0": { "dist": { "tarball": "https://r/lit-3.1.0.tgz" } },
-                "3.3.3": { "dist": { "tarball": "https://r/lit-3.3.3.tgz" } },
+                "3.3.3": { "dist": {
+                    "tarball": "https://r/lit-3.3.3.tgz",
+                    "integrity": "sha512-deadbeef"
+                } },
                 "4.0.0": { "dist": { "tarball": "https://r/lit-4.0.0.tgz" } },
                 "2.9.9": {}
             }
         });
-        let (ver, tarball) = select_version(&doc, &"^3".parse().unwrap()).unwrap();
+        let (ver, tarball, integrity) = select_version(&doc, &"^3".parse().unwrap()).unwrap();
         assert_eq!(ver, Version::parse("3.3.3").unwrap());
         assert_eq!(tarball.as_deref(), Some("https://r/lit-3.3.3.tgz"));
+        // The registry's dist.integrity rides along so node_modules can verify the tarball.
+        assert_eq!(integrity.as_deref(), Some("sha512-deadbeef"));
+    }
+
+    #[test]
+    fn select_version_integrity_is_none_when_absent() {
+        // A dist with a tarball but no integrity → integrity None. node_modules then refuses
+        // to install it unverified (from_lockfile is likewise strict on a missing sha512).
+        let doc = json!({ "versions": {
+            "1.0.0": { "dist": { "tarball": "https://r/x-1.0.0.tgz" } }
+        }});
+        let (_, tarball, integrity) = select_version(&doc, &"^1".parse().unwrap()).unwrap();
+        assert_eq!(tarball.as_deref(), Some("https://r/x-1.0.0.tgz"));
+        assert!(integrity.is_none());
     }
 
     #[test]
@@ -270,7 +302,10 @@ mod tests {
         versions.insert(
             version.to_string(),
             json!({
-                "dist": { "tarball": format!("https://r/{version}.tgz") },
+                "dist": {
+                    "tarball": format!("https://r/{version}.tgz"),
+                    "integrity": format!("sha512-{version}"),
+                },
                 "dependencies": Value::Object(dep_map),
             }),
         );
@@ -310,6 +345,17 @@ mod tests {
         };
         assert_eq!(ver("b"), "1.2.0");
         assert_eq!(ver("c"), "1.5.0");
+
+        // dist.integrity threads through the transitive walk, ready for verification.
+        let integrity = |n: &str| {
+            resolved
+                .iter()
+                .find(|r| r.name == n)
+                .unwrap()
+                .integrity
+                .clone()
+        };
+        assert_eq!(integrity("b").as_deref(), Some("sha512-1.2.0"));
     }
 
     #[test]
