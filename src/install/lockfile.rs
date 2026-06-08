@@ -66,6 +66,11 @@ pub fn from_lockfile(
 /// as under npm. The shims are *relative* (the tree stays relocatable) and their targets are made
 /// executable. On a name collision the first package (by sorted install path) wins. Unix only —
 /// `.bin` shims elsewhere are out of scope.
+///
+/// Path-traversal-safe against a crafted lockfile: the link *name* must be a single filename (no
+/// separator, `.` or `..`), and the link *target* is gated through [`safe_join`] — the same
+/// validated relative path feeds both the chmod and the symlink, so neither can escape
+/// `node_modules/`.
 #[cfg(unix)]
 fn link_bins(
     node_modules: &Path,
@@ -81,7 +86,10 @@ fn link_bins(
             continue;
         };
         for (bin_name, bin_path) in &pkg.bin {
-            // A bin name is a single filename under .bin/, never a path.
+            // The link itself is a single filename directly under .bin/ — never a path, so it
+            // can't escape .bin/. Reject '/', '.'/'..' and empty (on Unix '/' is the only
+            // separator). NB: `safe_join` is wrong here — it permits a bare `.`, which would
+            // resolve the link to `.bin` itself.
             if bin_name.is_empty() || bin_name.contains('/') || bin_name == "." || bin_name == ".."
             {
                 continue;
@@ -89,18 +97,25 @@ fn link_bins(
             if !linked.insert(bin_name.clone()) {
                 continue; // collision: the first (sorted) package keeps the name
             }
-            let bin_path = bin_path.trim_start_matches("./");
+            // The target relative to node_modules. `safe_join` is the traversal gate: it rejects
+            // any `..`/absolute component in the (attacker-controlled) key or bin path, erroring
+            // before any symlink is written. The *same* validated `rel` feeds both the chmod and
+            // the symlink, so the two can never diverge.
+            let rel = format!("{}/{}", install_rel, bin_path.trim_start_matches("./"));
+            let target = safe_join(node_modules, &rel)?;
             std::fs::create_dir_all(&bin_dir)?;
-            // Make the real entry file executable (npm does this on extract).
-            let target = safe_join(node_modules, &format!("{install_rel}/{bin_path}"))?;
+            // chmod +x the real entry (npm does this on extract). metadata/set_permissions follow
+            // symlinks, but extraction never creates symlinks inside node_modules, so `target` is
+            // a regular file (or absent) — not an attacker-planted link out of the tree.
             if let Ok(meta) = std::fs::metadata(&target) {
                 let mut perm = meta.permissions();
                 perm.set_mode(perm.mode() | 0o111);
                 let _ = std::fs::set_permissions(&target, perm);
             }
+            // `../rel` from .bin/ resolves to node_modules/rel === the validated `target`.
             let link = bin_dir.join(bin_name);
             let _ = std::fs::remove_file(&link); // idempotent
-            symlink(format!("../{install_rel}/{bin_path}"), &link)?;
+            symlink(format!("../{rel}"), &link)?;
         }
     }
     Ok(())
@@ -185,6 +200,50 @@ mod tests {
             .permissions()
             .mode();
         assert!(mode & 0o111 != 0, "bin target should be executable");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn link_bins_rejects_a_traversing_bin_target() {
+        // A crafted lockfile bin path that climbs out of node_modules must never become a symlink
+        // pointing outside the tree: safe_join is the gate, so the install errors instead.
+        let tmp = tempdir().unwrap();
+        let nm = tmp.path().join("node_modules");
+        let pkgs = [locked(
+            "node_modules/evil",
+            &[("evil", "../../../../../../tmp/pwned")],
+        )];
+        let plan: Vec<&LockedPackage> = pkgs.iter().collect();
+        assert!(
+            link_bins(&nm, &plan).is_err(),
+            "a traversing bin target is rejected"
+        );
+        assert!(
+            !nm.join(".bin/evil").exists(),
+            "no symlink is created for a traversing target"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn link_bins_skips_bin_names_that_are_paths() {
+        // A bin *name* is a single filename under .bin/; a name carrying a separator or `..` is
+        // skipped (never a traversing link), while a valid sibling bin still links.
+        let tmp = tempdir().unwrap();
+        let nm = tmp.path().join("node_modules");
+        std::fs::create_dir_all(nm.join("p")).unwrap();
+        std::fs::write(nm.join("p/cli.js"), b"#!/usr/bin/env node\n").unwrap();
+        let pkgs = [locked(
+            "node_modules/p",
+            &[("../escape", "cli.js"), ("ok", "cli.js")],
+        )];
+        let plan: Vec<&LockedPackage> = pkgs.iter().collect();
+        link_bins(&nm, &plan).unwrap();
+        assert!(nm.join(".bin/ok").exists(), "the valid bin is linked");
+        assert!(
+            !tmp.path().join("escape").exists() && !nm.join("escape").exists(),
+            "a path-like bin name creates nothing outside .bin/"
+        );
     }
 
     #[test]
