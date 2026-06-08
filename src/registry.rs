@@ -193,19 +193,9 @@ fn select_version(
     best
 }
 
-/// Convert an npm dependency spec into a semver [`VersionReq`], npm-faithfully: a bare
-/// full version (`"1.2.3"`) is an **exact** pin (`=1.2.3`); `"*"`, empty, `"x"` and
-/// `"latest"` mean any; range syntax (`^`, `~`, `>=`, …) parses as written.
-pub fn version_req(spec: &str) -> Result<VersionReq, semver::Error> {
-    let spec = spec.trim();
-    if spec.is_empty() || spec == "*" || spec == "x" || spec == "latest" {
-        return Ok(VersionReq::STAR);
-    }
-    if Version::parse(spec).is_ok() {
-        return VersionReq::parse(&format!("={spec}"));
-    }
-    VersionReq::parse(spec)
-}
+/// The npm dependency-spec → [`VersionReq`] parser lives in the [`crate::package_json`] module
+/// (the package-spec grammar); re-exported here for back-compat as `registry::version_req`.
+pub use crate::package_json::spec::version_req;
 
 /// The `dependencies` of a specific version, read from a packument, as `(name, spec)`
 /// pairs. The full packument carries each version's `dependencies` inline, so the
@@ -277,18 +267,6 @@ mod tests {
     fn select_version_none_when_no_match() {
         let doc = json!({ "versions": { "1.0.0": {}, "2.0.0": {} } });
         assert!(select_version(&doc, &"^5".parse().unwrap()).is_none());
-    }
-
-    #[test]
-    fn version_req_pins_bare_versions_and_parses_ranges() {
-        assert_eq!(version_req("1.2.3").unwrap(), "=1.2.3".parse().unwrap());
-        assert_eq!(version_req("^3.0.0").unwrap(), "^3.0.0".parse().unwrap());
-        assert_eq!(version_req("*").unwrap(), VersionReq::STAR);
-        assert_eq!(version_req("").unwrap(), VersionReq::STAR);
-        // A bare version matches ONLY itself — npm's exact-pin semantics.
-        let exact = version_req("1.2.3").unwrap();
-        assert!(exact.matches(&Version::parse("1.2.3").unwrap()));
-        assert!(!exact.matches(&Version::parse("1.2.4").unwrap()));
     }
 
     /// A one-version packument carrying a `dependencies` map, mirroring the registry's

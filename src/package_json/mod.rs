@@ -1,5 +1,23 @@
-//! Minimal `package.json` reader for consumers that pin dependency versions
-//! there (rather than resolving against the registry).
+//! Pure-Rust npm manifest + lockfile schemas, modeled on the npm specs:
+//!
+//! - <https://docs.npmjs.com/cli/v8/configuring-npm/package-lock-json>
+//! - <https://docs.npmjs.com/cli/v8/using-npm/package-spec>
+//!
+//! A module of `npm-utils` (`npm_utils::package_json`). It only parses and resolves — never
+//! writing files, hitting the network, or resolving untrusted paths — which keeps its strict
+//! spec-conformance tests pure and self-contained.
+//!
+//! Three pieces:
+//!
+//! - this module root: `package.json` — its `dependencies` specs and a browser-favoring
+//!   conditional-`exports` resolver (enough of Node's algorithm to build an ES-module
+//!   import map).
+//! - [`spec`] — the npm "package spec" dependency grammar ([`spec::Spec`]) and
+//!   [`spec::version_req`].
+//! - [`lock`] — `package-lock.json` (v2/v3) parsing into a faithful [`lock::Lockfile`].
+
+pub mod lock;
+pub mod spec;
 
 use serde_json::Value;
 use std::collections::HashMap;
