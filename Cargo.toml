@@ -1,6 +1,6 @@
 [package]
 name = "npm-utils"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Stefan Grönke <stefan@gronke.net>"]
 homepage = "https://github.com/gronke/rust-npm-utils"
 repository = "https://github.com/gronke/rust-npm-utils"
@@ -12,18 +12,44 @@ edition = "2021"
 rust-version = "1.77.2"
 include = ["src/**/*.rs", "Cargo.toml", "README.md", "LICENSE"]
 
+[features]
+# The `npm-utils` / `cargo-npm-utils` command-line tool (pure-Rust `npm install` / `ci` / `add` /
+# `init` / `upgrade`). Opt-in so library consumers never pull `clap`: install the CLI with
+# `cargo install npm-utils --features cli`.
+cli = ["dep:clap"]
+
 [dependencies]
 ureq = { version = "3.0", features = ["rustls"], default-features = false }
 flate2 = "1.1"
 tar = "0.4"
 zip = { version = "7", default-features = false, features = ["deflate", "time"] }
-serde_json = "1"
+# `preserve_order` keeps JSON object keys in insertion order, so the manifest/lockfile writers
+# (`package_json::manifest`, `package_json::lock::render_v3`) emit npm-faithful, stable key order
+# rather than alphabetized — and editing a `package.json` keeps the user's field order intact.
+serde_json = { version = "1", features = ["preserve_order"] }
 semver = "1"
 # Verify each downloaded tarball's `sha512-<base64>` integrity — the registry's `dist.integrity`
 # (`install::node_modules`) and the hash pinned in a package-lock.json (`install::from_lockfile`).
 # npm-install / npm-ci-faithful. Small, widely-trusted crates, MSRV ≤ 1.77.2.
 sha2 = "0.10"
 base64 = "0.22"
+
+# CLI only (feature `cli`). clap 4.5's MSRV (1.70) is below this crate's 1.77.2, so it does not
+# raise the library MSRV; optional, so it is absent from a default library build.
+clap = { version = "4.5", features = ["derive"], optional = true }
+
+# The CLI ships as two binaries from this one crate: `npm-utils <verb>` and, via cargo's
+# `cargo-<name>` convention, `cargo npm-utils <verb>`. `cargo install npm-utils --features cli`
+# installs both. Each requires the `cli` feature, so a default `cargo build` skips them.
+[[bin]]
+name = "npm-utils"
+path = "src/bin/npm-utils.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "cargo-npm-utils"
+path = "src/bin/cargo-npm-utils.rs"
+required-features = ["cli"]
 
 [dev-dependencies]
 tempfile = "3"

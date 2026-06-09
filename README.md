@@ -6,6 +6,10 @@ real `node_modules/` from a `package.json` or `package-lock.json`. No Node or np
 at build time; just `ureq` + archive extraction. Handy from a `build.rs` to vendor
 browser/JS dependencies into your own asset tree.
 
+It's both a **library** (the modules below) and an optional **command-line tool** —
+`cargo npm-utils install` / `add` / `ci` / …, a pure-Rust subset of npm's verbs. See
+[CLI](#cli).
+
 ## Modules
 
 - **`registry`** — `Registry::npm()`; `tarball_url(name, version)` (handles
@@ -61,6 +65,40 @@ npm_utils::install::from_lockfile(&project.join("package-lock.json"), project)?;
 
 See [`examples/date-converter`](examples/date-converter) for a runnable Lit +
 `Temporal` demo that vendors its dependencies with this crate.
+
+## CLI
+
+The same engine ships as a command-line tool behind the `cli` feature — a pure-Rust
+subset of npm's verbs, no Node or npm:
+
+```bash
+cargo install npm-utils --features cli
+```
+
+That installs two binaries — `npm-utils` and `cargo-npm-utils` — so every verb works
+standalone *or* as a cargo subcommand (`npm-utils add lit` ≡ `cargo npm-utils add lit`):
+
+| Command | npm | What it does |
+|---------|-----|--------------|
+| `install [dir]` | `npm install` | resolve `package.json`'s `dependencies` → `node_modules/` |
+| `ci [dir]` | `npm ci` | install the exact tree a `package-lock.json` pins |
+| `add <pkg…> [--dir d]` | `npm install <pkg>` | resolve, record in `package.json`, write the lock, install |
+| `init [--name n]` | `npm init -y` | scaffold a `package.json` |
+| `upgrade [pkg…]` | `npm update` | re-resolve within ranges, refresh the lock, install |
+| `resolve <pkg> [range]` | — | print the newest matching version (tarball + integrity) |
+| `download <pkg> [range]` | `npm pack` | fetch a package tarball |
+
+```bash
+cargo npm-utils init --name demo
+cargo npm-utils add lit@^3 @lit/context   # resolve, write package.json + lock, install
+cargo npm-utils ci                        # reproduce the locked tree, integrity-checked
+```
+
+`add`/`upgrade` write a `lockfileVersion`-3 `package-lock.json` that both npm and
+`npm-utils ci` read — every tarball pinned with its `sha512`. It is an npm-compatible
+lock for the **registry/production tree**, not a byte-for-byte npm reproduction
+(dev/optional classification and peer/bundle dependencies are out of scope). The CLI
+mirrors npm's vocabulary for the subset it supports; it is **not** a full npm drop-in.
 
 ## License
 

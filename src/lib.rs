@@ -37,6 +37,11 @@
 //! ```
 
 pub mod cache;
+// The command-line tool (`npm-utils` / `cargo npm-utils`), behind the `cli` feature so a default
+// library build pulls no `clap`. Drives the primitives below — `registry`, `install`, and the
+// `package_json` manifest/lock writers — for `install`/`ci`/`add`/`init`/`upgrade`.
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod download;
 pub mod extract;
 pub mod install;

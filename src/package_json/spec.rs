@@ -84,6 +84,85 @@ pub fn version_req(spec: &str) -> Result<VersionReq, semver::Error> {
     VersionReq::parse(spec)
 }
 
+/// An npm version **range**: `||`-separated alternatives, each a (possibly space-separated) set
+/// of comparators. Rust's [`VersionReq`] handles only comma-separated comparators and has no
+/// `||`, yet `||` ranges are pervasive in published packages' dependencies (e.g.
+/// `@lit/reactive-element`'s `^1.6.2 || ^2.1.0`). A [`Range`] parses npm's grammar into a set of
+/// [`VersionReq`]s and is satisfied when **any** alternative is — so transitive resolution works
+/// on real-world trees. ([`version_req`] stays for the single-comparator-set case.)
+#[derive(Debug, Clone)]
+pub struct Range {
+    alternatives: Vec<VersionReq>,
+}
+
+impl Range {
+    /// A range matching any version (`*`).
+    pub fn any() -> Range {
+        Range {
+            alternatives: vec![VersionReq::STAR],
+        }
+    }
+
+    /// Parse an npm range. `||` separates alternatives; within one, npm's space-separated
+    /// comparators are joined with commas for `semver`. A bare full version is an exact pin;
+    /// `*`/`x`/empty/`latest` match anything.
+    pub fn parse(spec: &str) -> Result<Range, semver::Error> {
+        let spec = spec.trim();
+        if spec.is_empty() || spec == "*" || spec == "x" || spec == "latest" {
+            return Ok(Range::any());
+        }
+        let alternatives = spec
+            .split("||")
+            .map(|alt| parse_alternative(alt.trim()))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Range { alternatives })
+    }
+
+    /// Whether `version` satisfies any alternative.
+    pub fn matches(&self, version: &Version) -> bool {
+        self.alternatives.iter().any(|req| req.matches(version))
+    }
+}
+
+impl From<VersionReq> for Range {
+    fn from(req: VersionReq) -> Range {
+        Range {
+            alternatives: vec![req],
+        }
+    }
+}
+
+impl std::str::FromStr for Range {
+    type Err = semver::Error;
+    fn from_str(s: &str) -> Result<Range, semver::Error> {
+        Range::parse(s)
+    }
+}
+
+impl std::fmt::Display for Range {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, req) in self.alternatives.iter().enumerate() {
+            if i > 0 {
+                write!(f, " || ")?;
+            }
+            write!(f, "{req}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Parse one `||`-free alternative: a bare full version → an exact pin; otherwise npm's
+/// space-separated comparators joined with commas (what `semver` expects).
+fn parse_alternative(alt: &str) -> Result<VersionReq, semver::Error> {
+    if alt.is_empty() || alt == "*" || alt == "x" {
+        return Ok(VersionReq::STAR);
+    }
+    if Version::parse(alt).is_ok() {
+        return VersionReq::parse(&format!("={alt}"));
+    }
+    VersionReq::parse(&alt.split_whitespace().collect::<Vec<_>>().join(", "))
+}
+
 /// Build a [`Spec::Git`], splitting off a `#committish` if present.
 fn git_spec(s: &str) -> Spec {
     match s.split_once('#') {
@@ -155,6 +234,33 @@ mod tests {
         let exact = version_req("1.2.3").unwrap();
         assert!(exact.matches(&Version::parse("1.2.3").unwrap()));
         assert!(!exact.matches(&Version::parse("1.2.4").unwrap()));
+    }
+
+    #[test]
+    fn range_handles_or_and_space_separated_alternatives() {
+        let v = |s: &str| Version::parse(s).unwrap();
+
+        // The `||` OR-range that broke transitive resolution (e.g. @lit/reactive-element).
+        let r = Range::parse("^1.6.2 || ^2.1.0").unwrap();
+        assert!(r.matches(&v("1.6.2")));
+        assert!(r.matches(&v("1.9.0")));
+        assert!(r.matches(&v("2.1.0")));
+        assert!(
+            !r.matches(&v("2.0.0")),
+            "below the ^2.1.0 alternative's floor"
+        );
+        assert!(!r.matches(&v("3.0.0")));
+
+        // Space-separated comparators (npm AND) are joined with commas for semver.
+        let and = Range::parse(">=1.6.2 <2.0.0").unwrap();
+        assert!(and.matches(&v("1.9.0")));
+        assert!(!and.matches(&v("2.0.0")));
+
+        // A bare version is an exact pin; `*`/empty/`Range::any` match anything.
+        assert!(Range::parse("1.2.3").unwrap().matches(&v("1.2.3")));
+        assert!(!Range::parse("1.2.3").unwrap().matches(&v("1.2.4")));
+        assert!(Range::any().matches(&v("9.9.9")));
+        assert!(Range::parse("*").unwrap().matches(&v("9.9.9")));
     }
 
     #[test]
