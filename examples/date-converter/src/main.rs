@@ -1,5 +1,5 @@
-//! Vendors this demo's browser dependencies with `npm-utils` — no Node, no
-//! npm — then serves the page over a small Axum static server.
+//! Vendors this demo's browser dependencies (declared in `web/package.json`) with
+//! `npm-utils` — no Node, no npm — then serves the page over a small Axum static server.
 //!
 //! Resolves each package against the npm registry, downloads its tarball, and
 //! extracts the production `.js`/`.mjs` into `web/web_modules/<specifier>/`,
@@ -12,34 +12,15 @@
 //! # then open the printed http://127.0.0.1:8080/
 //! ```
 
-use npm_utils::{download, extract, registry::Registry};
+use npm_utils::{download, extract, package_json::parse_dependencies, registry::Registry};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::path::Path;
 
-/// `(directory under web_modules/, npm package, semver range)`.
-///
-/// `lit` pulls in `lit-html`, `lit-element`, and `@lit/reactive-element` via bare
-/// specifiers, so the closure is resolved explicitly here (this crate does
-/// *direct* resolution — no transitive walking). Plus the Web Components polyfill
-/// (loaded as a fallback) and the `Temporal` polyfill.
-const DEPS: &[(&str, &str, &str)] = &[
-    ("lit", "lit", "^3"),
-    ("lit-html", "lit-html", "^3"),
-    ("lit-element", "lit-element", "^4"),
-    ("@lit/reactive-element", "@lit/reactive-element", "^2"),
-    (
-        "@webcomponents/webcomponentsjs",
-        "@webcomponents/webcomponentsjs",
-        "^2",
-    ),
-    ("temporal-polyfill", "temporal-polyfill", "^0.3"),
-];
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let web = Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
-    vendor(&web.join("web_modules"))?;
+    vendor(&web)?;
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     let app = axum::Router::new().fallback_service(tower_http::services::ServeDir::new(&web));
@@ -52,8 +33,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Resolve + download + extract the browser dependencies into `vendor_dir`.
-fn vendor(vendor_dir: &Path) -> Result<(), Box<dyn Error>> {
+/// Resolve + download + extract the browser dependencies declared in
+/// `web/package.json` into `web/web_modules/<name>/`.
+///
+/// The list comes straight from the manifest — read with
+/// [`npm_utils::package_json::parse_dependencies`], the same `package.json` npm
+/// reads. This demo resolves each dependency *directly*, without walking transitive
+/// deps, so the manifest lists lit's family (`lit-html`, `lit-element`,
+/// `@lit/reactive-element`) explicitly, alongside the Web Components and `Temporal`
+/// polyfills.
+fn vendor(web: &Path) -> Result<(), Box<dyn Error>> {
     let reg = Registry::npm();
 
     // Keep production browser modules; drop TypeScript sources and the node-only
@@ -68,19 +57,25 @@ fn vendor(vendor_dir: &Path) -> Result<(), Box<dyn Error>> {
         (rel.ends_with(".js") || rel.ends_with(".mjs")).then(|| rel.to_string())
     };
 
-    for &(dir, pkg, range) in DEPS {
-        let req = range.parse()?;
-        let resolved = reg.resolve(pkg, &req)?;
+    // The dependency set lives in web/package.json; sort it for stable output order.
+    let mut deps: Vec<_> = parse_dependencies(&web.join("package.json"))?
+        .into_values()
+        .collect();
+    deps.sort_by(|a, b| a.name.cmp(&b.name));
+
+    for dep in &deps {
+        let req = dep.version.parse()?;
+        let resolved = reg.resolve(&dep.name, &req)?;
         let tarball = download::fetch(&resolved.tarball_url)?;
         let n = extract::tar_gz(
             &tarball,
-            &vendor_dir.join(dir),
+            &web.join("web_modules").join(&dep.name),
             Some("package/"),
             extract::Select::Matching(&keep),
         )?;
         println!(
-            "vendored {pkg} v{} → web/web_modules/{dir}/ ({n} files)",
-            resolved.version
+            "vendored {} v{} → web/web_modules/{}/ ({n} files)",
+            dep.name, resolved.version, dep.name
         );
     }
     Ok(())

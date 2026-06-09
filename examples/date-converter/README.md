@@ -15,13 +15,16 @@ cargo run -p date-converter
 
 ## How it works
 
-`src/main.rs` vendors the deps, then serves `web/` over a small Axum `ServeDir`:
+`src/main.rs` reads the dependency list from `web/package.json`, vendors each, then
+serves `web/` over a small Axum `ServeDir`:
 
-- `Registry::npm().resolve(pkg, &req)` picks the newest version matching a semver
-  range and returns its tarball URL,
+- `package_json::parse_dependencies("web/package.json")` reads the declared
+  `dependencies` (name + semver range),
+- `Registry::npm().resolve(name, &req)` picks the newest matching version and returns
+  its tarball URL,
 - `download::fetch(url)` pulls the tarball, and
 - `extract::tar_gz(.., Select::Matching(..))` writes the production `.js`/`.mjs`
-  into `web/web_modules/<specifier>/`.
+  into `web/web_modules/<name>/`.
 
 `web/index.html` maps the bare specifiers (`lit`, `temporal-polyfill`, …) to those
 files via an importmap and loads the Web Components polyfill as a fallback.
