@@ -1,0 +1,12 @@
+{
+  "name": "date-converter",
+  "private": true,
+  "dependencies": {
+    "lit": "^3",
+    "lit-html": "^3",
+    "lit-element": "^4",
+    "@lit/reactive-element": "^2",
+    "@webcomponents/webcomponentsjs": "^2",
+    "temporal-polyfill": "^0.3"
+  }
+}
