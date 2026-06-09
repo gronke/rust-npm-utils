@@ -2,10 +2,11 @@
 //! <https://docs.npmjs.com/cli/v8/configuring-npm/package-lock-json>.
 //!
 //! [`Lockfile::parse`] reads the flat `packages` map into faithful [`LockedPackage`] data.
-//! It touches no filesystem and resolves no paths: a caller turns a [`LockedPackage::key`]
-//! into an install path itself, so this parser stays pure and the path-safety check lives
-//! with the installer. lockfileVersion 1 (the legacy hierarchical `dependencies` tree, with
-//! no `packages` map) is unsupported.
+//! [`render_v3`] is the inverse: it emits a `lockfileVersion`-3 document for a flat resolved set
+//! (what `cargo npm-utils add`/`upgrade` write). Both are pure — they touch no filesystem and
+//! resolve no paths: a caller turns a [`LockedPackage::key`] into an install path itself, so this
+//! parser stays pure and the path-safety check lives with the installer. lockfileVersion 1 (the
+//! legacy hierarchical `dependencies` tree, with no `packages` map) is unsupported.
 
 use serde_json::{Map, Value};
 
@@ -94,6 +95,79 @@ impl Lockfile {
             .filter(|p| p.matches_platform(host_os, host_arch))
             .collect()
     }
+}
+
+/// A resolved package to record in a generated lockfile — the write-side input mirroring a parsed
+/// [`LockedPackage`], kept to the flat-tree fields [`render_v3`] emits.
+#[derive(Debug, Clone)]
+pub struct LockEntry {
+    /// Package name (the `node_modules/<name>` key segment).
+    pub name: String,
+    /// Exact resolved version.
+    pub version: String,
+    /// The registry tarball URL — the entry's `resolved`.
+    pub resolved: String,
+    /// The `sha512-…` Subresource-Integrity, when the registry advertised one.
+    pub integrity: Option<String>,
+}
+
+/// Render a `lockfileVersion`-3 `package-lock.json` for a **flat** dependency tree: a root `""`
+/// entry (the project `name`/`version` and its direct dependency ranges) plus one
+/// `node_modules/<name>` entry per resolved package. Keys are emitted in npm's order
+/// (`name`, `version`, `lockfileVersion`, `requires`, `packages`) thanks to `serde_json`'s
+/// `preserve_order`.
+///
+/// Scope (documented, intentional): this is an **npm-compatible v3 lock for the registry/prod
+/// tree** that round-trips through [`Lockfile::parse`] and installs via
+/// [`crate::install::from_lockfile`] — it is *not* a byte-for-byte npm reproduction. The flat set
+/// from [`crate::registry::Registry::resolve_tree`] carries no dev/optional classification, so no
+/// `dev`/`optional` flags are emitted, and `peerDependencies`/`bundleDependencies` and per-package
+/// `dependencies` back-references are omitted.
+pub fn render_v3(
+    root_name: &str,
+    root_version: &str,
+    direct: &[(String, String)],
+    entries: &[LockEntry],
+) -> String {
+    use serde_json::json;
+
+    let mut packages = Map::new();
+
+    // The root project entry, keyed "".
+    let mut root = Map::new();
+    root.insert("name".into(), json!(root_name));
+    root.insert("version".into(), json!(root_version));
+    if !direct.is_empty() {
+        let mut deps = Map::new();
+        for (name, range) in direct {
+            deps.insert(name.clone(), json!(range));
+        }
+        root.insert("dependencies".into(), Value::Object(deps));
+    }
+    packages.insert(String::new(), Value::Object(root));
+
+    // One node_modules/<name> entry per resolved package, in the order given (resolve_tree
+    // returns them sorted by name).
+    for entry in entries {
+        let mut pkg = Map::new();
+        pkg.insert("version".into(), json!(entry.version));
+        pkg.insert("resolved".into(), json!(entry.resolved));
+        if let Some(integrity) = &entry.integrity {
+            pkg.insert("integrity".into(), json!(integrity));
+        }
+        packages.insert(format!("node_modules/{}", entry.name), Value::Object(pkg));
+    }
+
+    let doc = json!({
+        "name": root_name,
+        "version": root_version,
+        "lockfileVersion": 3,
+        "requires": true,
+        "packages": Value::Object(packages),
+    });
+    let mut out = serde_json::to_string_pretty(&doc).expect("serialize package-lock.json");
+    out.push('\n');
+    out
 }
 
 impl LockedPackage {
@@ -329,5 +403,57 @@ mod tests {
         // os:["darwin"] — excluded on a linux host, allowed on macos (rust "macos" → "darwin").
         assert!(!fsevents.matches_platform("linux", "x86_64"));
         assert!(fsevents.matches_platform("macos", "aarch64"));
+    }
+
+    #[test]
+    fn render_v3_emits_npm_order_and_round_trips_through_parse() {
+        let entries = vec![
+            LockEntry {
+                name: "ms".into(),
+                version: "2.1.3".into(),
+                resolved: "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz".into(),
+                integrity: Some("sha512-MS".into()),
+            },
+            LockEntry {
+                name: "@scope/pkg".into(),
+                version: "1.0.0".into(),
+                resolved: "https://registry.npmjs.org/@scope/pkg/-/pkg-1.0.0.tgz".into(),
+                integrity: Some("sha512-SP".into()),
+            },
+        ];
+        let direct = vec![("ms".to_string(), "^2".to_string())];
+        let json = render_v3("fixture", "1.0.0", &direct, &entries);
+
+        // Top-level keys come out in npm's order (preserve_order), not alphabetized.
+        let doc: Value = serde_json::from_str(&json).unwrap();
+        let keys: Vec<&str> = doc
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            ["name", "version", "lockfileVersion", "requires", "packages"]
+        );
+        // The root "" entry records the direct dependency ranges from package.json.
+        assert_eq!(doc["packages"][""]["dependencies"]["ms"], "^2");
+
+        // It parses back as a v3 lock; the two registry entries are installable (root "" and
+        // any link excluded), sorted by key, with integrity + resolved threaded through.
+        let lock = Lockfile::parse(&json).unwrap();
+        assert_eq!(lock.version, 3);
+        let names: Vec<&str> = lock
+            .installable("linux", "x86_64")
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(names, ["@scope/pkg", "ms"]);
+        let ms = lock.packages.iter().find(|p| p.name == "ms").unwrap();
+        assert_eq!(ms.integrity.as_deref(), Some("sha512-MS"));
+        assert!(
+            ms.is_registry_tarball(),
+            "resolved is an https registry tarball"
+        );
     }
 }

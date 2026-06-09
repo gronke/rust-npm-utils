@@ -3,20 +3,25 @@
 //! - <https://docs.npmjs.com/cli/v8/configuring-npm/package-lock-json>
 //! - <https://docs.npmjs.com/cli/v8/using-npm/package-spec>
 //!
-//! A module of `npm-utils` (`npm_utils::package_json`). It only parses and resolves — never
-//! writing files, hitting the network, or resolving untrusted paths — which keeps its strict
-//! spec-conformance tests pure and self-contained.
+//! A module of `npm-utils` (`npm_utils::package_json`). It parses, resolves, and renders —
+//! manifests and lockfiles as pure `Value`/string transforms — but never writes files, hits the
+//! network, or resolves untrusted paths, which keeps its strict spec-conformance tests pure and
+//! self-contained (the CLI does the file IO).
 //!
-//! Three pieces:
+//! Four pieces:
 //!
 //! - this module root: `package.json` — its `dependencies` specs and a browser-favoring
 //!   conditional-`exports` resolver (enough of Node's algorithm to build an ES-module
 //!   import map).
 //! - [`spec`] — the npm "package spec" dependency grammar ([`spec::Spec`]) and
 //!   [`spec::version_req`].
-//! - [`lock`] — `package-lock.json` (v2/v3) parsing into a faithful [`lock::Lockfile`].
+//! - [`lock`] — `package-lock.json` (v2/v3) parsing into a faithful [`lock::Lockfile`], and
+//!   [`lock::render_v3`] for emitting one.
+//! - [`manifest`] — pure write-side `package.json` transforms (scaffold / upsert a dependency)
+//!   for the CLI's `init`/`add`.
 
 pub mod lock;
+pub mod manifest;
 pub mod spec;
 
 use serde_json::Value;

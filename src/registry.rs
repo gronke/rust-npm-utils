@@ -2,7 +2,8 @@
 //! resolution against a semver range.
 
 use crate::download;
-use semver::{Version, VersionReq};
+use crate::package_json::spec::Range;
+use semver::Version;
 use serde_json::Value;
 
 /// An npm-compatible registry. Defaults to the public registry.
@@ -67,15 +68,15 @@ impl Registry {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
-    /// Resolve the newest published version of `name` matching `req`.
+    /// Resolve the newest published version of `name` matching the `range`.
     pub fn resolve(
         &self,
         name: &str,
-        req: &VersionReq,
+        range: &Range,
     ) -> Result<Resolved, Box<dyn std::error::Error>> {
         let doc = self.packument(name)?;
-        let (version, tarball, integrity) = select_version(&doc, req)
-            .ok_or_else(|| format!("no published version of {name} matches {req}"))?;
+        let (version, tarball, integrity) = select_version(&doc, range)
+            .ok_or_else(|| format!("no published version of {name} matches {range}"))?;
         let tarball_url = tarball.unwrap_or_else(|| self.tarball_url(name, &version.to_string()));
         Ok(Resolved {
             name: name.to_string(),
@@ -97,7 +98,7 @@ impl Registry {
     /// nesting — is reported as an error rather than silently mis-resolved.
     pub fn resolve_tree(
         &self,
-        roots: &[(String, VersionReq)],
+        roots: &[(String, Range)],
     ) -> Result<Vec<Resolved>, Box<dyn std::error::Error>> {
         self.resolve_tree_from(roots, |name| self.packument(name))
     }
@@ -106,7 +107,7 @@ impl Registry {
     /// graph walk can be unit-tested without the network.
     fn resolve_tree_from<F>(
         &self,
-        roots: &[(String, VersionReq)],
+        roots: &[(String, Range)],
         mut get_packument: F,
     ) -> Result<Vec<Resolved>, Box<dyn std::error::Error>>
     where
@@ -115,15 +116,15 @@ impl Registry {
         use std::collections::{HashMap, VecDeque};
         let mut packuments: HashMap<String, Value> = HashMap::new();
         let mut resolved: HashMap<String, Resolved> = HashMap::new();
-        let mut queue: VecDeque<(String, VersionReq)> = roots.iter().cloned().collect();
+        let mut queue: VecDeque<(String, Range)> = roots.iter().cloned().collect();
 
-        while let Some((name, req)) = queue.pop_front() {
+        while let Some((name, range)) = queue.pop_front() {
             if let Some(existing) = resolved.get(&name) {
-                if req.matches(&existing.version) {
+                if range.matches(&existing.version) {
                     continue; // already resolved to a satisfying version — dedup
                 }
                 return Err(format!(
-                    "version conflict for `{name}`: resolved {} but also required `{req}` \
+                    "version conflict for `{name}`: resolved {} but also required `{range}` \
                      (flat node_modules install resolves one version per package)",
                     existing.version
                 )
@@ -134,19 +135,20 @@ impl Registry {
                 packuments.insert(name.clone(), doc);
             }
             let doc = &packuments[&name];
-            let (version, tarball, integrity) = select_version(doc, &req)
-                .ok_or_else(|| format!("no published version of {name} matches {req}"))?;
+            let (version, tarball, integrity) = select_version(doc, &range)
+                .ok_or_else(|| format!("no published version of {name} matches {range}"))?;
             let deps = dependencies_of(doc, &version);
             let tarball_url =
                 tarball.unwrap_or_else(|| self.tarball_url(&name, &version.to_string()));
             for (dep_name, dep_spec) in deps {
-                let dep_req = version_req(&dep_spec).map_err(|e| {
+                // Transitive deps routinely use npm `||`/space ranges; parse the full grammar.
+                let dep_range = Range::parse(&dep_spec).map_err(|e| {
                     format!(
                         "{name}@{version} dependency `{dep_name}`: unsupported version \
                          {dep_spec:?}: {e}"
                     )
                 })?;
-                queue.push_back((dep_name, dep_req));
+                queue.push_back((dep_name, dep_range));
             }
             resolved.insert(
                 name.clone(),
@@ -164,20 +166,17 @@ impl Registry {
     }
 }
 
-/// Pick the newest version in a packument's `versions` map that satisfies `req`,
+/// Pick the newest version in a packument's `versions` map that satisfies the `range`,
 /// returning it with the `dist.tarball` URL and the `dist.integrity` SRI the registry
 /// advertises (each `None` if absent). Factored out for unit testing without network access.
-fn select_version(
-    doc: &Value,
-    req: &VersionReq,
-) -> Option<(Version, Option<String>, Option<String>)> {
+fn select_version(doc: &Value, range: &Range) -> Option<(Version, Option<String>, Option<String>)> {
     let versions = doc.get("versions")?.as_object()?;
     let mut best: Option<(Version, Option<String>, Option<String>)> = None;
     for (ver_str, meta) in versions {
         let Ok(ver) = Version::parse(ver_str) else {
             continue;
         };
-        if !req.matches(&ver) {
+        if !range.matches(&ver) {
             continue;
         }
         if best.as_ref().map(|(b, _, _)| ver > *b).unwrap_or(true) {
@@ -334,6 +333,43 @@ mod tests {
                 .clone()
         };
         assert_eq!(integrity("b").as_deref(), Some("sha512-1.2.0"));
+    }
+
+    #[test]
+    fn resolve_tree_resolves_a_transitive_or_range() {
+        // Regression: a transitive dep with an npm `||` range (e.g. @lit/context →
+        // @lit/reactive-element `^1.6.2 || ^2.1.0`) must resolve, not fail to parse the `||`.
+        let mut pkgs: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+        pkgs.insert(
+            "ctx".into(),
+            packument_with("1.1.6", &[("re", "^1.6.2 || ^2.1.0")]),
+        );
+        pkgs.insert("re".into(), packument_with("2.1.0", &[]));
+
+        let roots = vec![("ctx".to_string(), "^1".parse().unwrap())];
+        let resolved = Registry::npm()
+            .resolve_tree_from(&roots, |name| {
+                pkgs.get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("no packument for {name}").into())
+            })
+            .unwrap();
+
+        let names: Vec<&str> = resolved.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["ctx", "re"],
+            "the `||`-ranged transitive dep resolved"
+        );
+        assert_eq!(
+            resolved
+                .iter()
+                .find(|r| r.name == "re")
+                .unwrap()
+                .version
+                .to_string(),
+            "2.1.0"
+        );
     }
 
     #[test]

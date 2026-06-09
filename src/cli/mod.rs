@@ -1,0 +1,196 @@
+//! The `npm-utils` / `cargo npm-utils` command-line tool (feature `cli`).
+//!
+//! Pure-Rust npm verbs over the crate's primitives — it mirrors npm's vocabulary for the subset it
+//! supports and is deliberately **not** a full npm drop-in. Each verb lives in its own submodule;
+//! the shared helpers they lean on (manifest read/write, the lock+install `sync` that `add` and
+//! `upgrade` both run, install reporting) live in the `common` submodule.
+//!
+//! - `install` — resolve `package.json`'s `dependencies` and install `node_modules/` (= `npm install`).
+//! - `ci` — install the exact tree a `package-lock.json` pins (= `npm ci`).
+//! - `add` — resolve package(s), record them in `package.json`, write `package-lock.json`, install.
+//! - `init` — scaffold a `package.json` (= `npm init -y`).
+//! - `upgrade` — re-resolve within ranges, refresh the lock, install (= `npm update`).
+//! - `resolve` / `download` — thin registry probes (print a resolution / fetch a tarball).
+//!
+//! The library does the heavy lifting ([`crate::registry`], [`crate::install`], and the
+//! [`crate::package_json`] manifest/lock writers); this module is the argument parsing + the file
+//! IO those pure transforms leave to the caller. Both bins (`npm-utils`, `cargo-npm-utils`) are
+//! thin shells over [`main_with`].
+
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use clap::{Parser, Subcommand};
+
+mod add;
+mod ci;
+mod common;
+mod download;
+mod init;
+mod install;
+mod resolve;
+mod upgrade;
+
+/// This module's ubiquitous fallible return — `()` by default.
+pub(crate) type Res<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+#[derive(Parser)]
+#[command(
+    name = "npm-utils",
+    version,
+    about = "Pure-Rust npm registry tools: install · ci · add · init · upgrade"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Install all `dependencies` from package.json into `node_modules/` (= `npm install`).
+    Install {
+        /// Project directory containing package.json.
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Install the exact tree pinned by package-lock.json into `node_modules/` (= `npm ci`).
+    Ci {
+        /// Project directory containing package-lock.json.
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Resolve + add package(s) to package.json, write package-lock.json, and install (= `npm add`).
+    Add {
+        /// Packages as `name` or `name@range` (e.g. `lit`, `lit@^3`, `@lit/context@^1`).
+        #[arg(required = true)]
+        packages: Vec<String>,
+        /// Project directory.
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Create a package.json in the directory (= `npm init -y`).
+    Init {
+        /// Project directory.
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        /// Package name (defaults to the directory name).
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Re-resolve dependencies within their ranges, refresh the lock, and install (= `npm update`).
+    Upgrade {
+        /// Packages to upgrade; empty means all `dependencies`.
+        packages: Vec<String>,
+        /// Project directory.
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Resolve the newest version matching a range and print it (version, tarball, integrity).
+    Resolve {
+        /// Package name.
+        name: String,
+        /// Semver range (default: any).
+        #[arg(default_value = "*")]
+        range: String,
+    },
+    /// Download a package tarball to a file — resolve + fetch, no install.
+    Download {
+        /// Package name.
+        name: String,
+        /// Semver range (default: any).
+        #[arg(default_value = "*")]
+        range: String,
+        /// Write the .tgz here (default: `<name>-<version>.tgz` in the current dir).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+}
+
+/// Parse `argv` and dispatch to the verb's submodule. `argv` is taken explicitly (not
+/// `std::env::args_os()`) so the `cargo-npm-utils` shim can strip the re-passed subcommand name
+/// before handing off.
+pub fn run(argv: impl IntoIterator<Item = OsString>) -> Res {
+    match Cli::parse_from(argv).command {
+        Command::Install { dir } => install::run(&dir),
+        Command::Ci { dir } => ci::run(&dir),
+        Command::Add { packages, dir } => add::run(&packages, &dir),
+        Command::Init { dir, name } => init::run(&dir, name.as_deref()),
+        Command::Upgrade { packages, dir } => upgrade::run(&packages, &dir),
+        Command::Resolve { name, range } => resolve::run(&name, &range),
+        Command::Download { name, range, out } => download::run(&name, &range, out.as_deref()),
+    }
+}
+
+/// Bin entry point: run, then map an error to a tidy message + nonzero exit (instead of the
+/// `Result`-returning-`main` `Error: …` Debug dump).
+pub fn main_with(argv: impl IntoIterator<Item = OsString>) -> ExitCode {
+    match run(argv) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("npm-utils: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `cargo-npm-utils` entry point: cargo invokes the bin as `cargo-npm-utils npm-utils <verb> …`,
+/// re-passing the subcommand name as `argv[1]`; strip it so clap sees the real verb.
+pub fn run_as_cargo_subcommand(argv: impl IntoIterator<Item = OsString>) -> ExitCode {
+    main_with(strip_cargo_prefix(argv.into_iter().collect()))
+}
+
+/// Drop a leading `npm-utils` token at `argv[1]` (cargo's re-passed subcommand name). A no-op when
+/// the bin is run directly (`cargo-npm-utils install` → `argv[1]` is the verb, left alone).
+fn strip_cargo_prefix(mut args: Vec<OsString>) -> Vec<OsString> {
+    if args.get(1).is_some_and(|a| a == "npm-utils") {
+        args.remove(1);
+    }
+    args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn osv(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn strip_cargo_prefix_drops_the_repassed_subcommand_name() {
+        // `cargo npm-utils add lit` → cargo execs us with the subcommand name re-passed.
+        assert_eq!(
+            strip_cargo_prefix(osv(&["cargo-npm-utils", "npm-utils", "add", "lit"])),
+            osv(&["cargo-npm-utils", "add", "lit"])
+        );
+        // Run directly: argv[1] is the real verb, untouched.
+        assert_eq!(
+            strip_cargo_prefix(osv(&["cargo-npm-utils", "install"])),
+            osv(&["cargo-npm-utils", "install"])
+        );
+        // Degenerate argv (no args) is left as-is.
+        assert_eq!(
+            strip_cargo_prefix(osv(&["cargo-npm-utils"])),
+            osv(&["cargo-npm-utils"])
+        );
+    }
+
+    #[test]
+    fn cli_parses_the_verb_set() {
+        // A smoke test that the clap grammar accepts each verb (no dispatch/network).
+        for argv in [
+            osv(&["npm-utils", "install"]),
+            osv(&["npm-utils", "ci", "/tmp/x"]),
+            osv(&["npm-utils", "add", "lit@^3", "--dir", "/tmp/x"]),
+            osv(&["npm-utils", "init", "--name", "demo"]),
+            osv(&["npm-utils", "upgrade"]),
+            osv(&["npm-utils", "resolve", "lit", "^3"]),
+            osv(&["npm-utils", "download", "ms", "--out", "/tmp/ms.tgz"]),
+        ] {
+            assert!(Cli::try_parse_from(argv).is_ok());
+        }
+        // `add` requires at least one package.
+        assert!(Cli::try_parse_from(osv(&["npm-utils", "add"])).is_err());
+    }
+}
