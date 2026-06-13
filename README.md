@@ -100,6 +100,15 @@ lock for the **registry/production tree**, not a byte-for-byte npm reproduction
 (dev/optional classification and peer/bundle dependencies are out of scope). The CLI
 mirrors npm's vocabulary for the subset it supports; it is **not** a full npm drop-in.
 
+## Scope
+
+Not a general `npm`: npm-utils vendors **public-registry** packages and reproduces a committed
+`package-lock.json` — that's the remit. So: **no lifecycle scripts** (by design), **public
+registry only** (no `.npmrc`/auth), and `node_modules()` resolves a **flat, prod-only** tree that
+errors on a version conflict npm would nest — install from a lockfile (`from_lockfile`/`ci`) for a
+full tree. Anything unsupported — a dist-tag like `next`, `overrides`, lockfile v1 — fails with a
+clear error rather than silently.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
