@@ -324,6 +324,34 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn rejects_writing_through_a_preexisting_leaf_symlink() {
+        use std::os::unix::fs::symlink;
+        // Like the test above, but the symlink is the *leaf* being written, not a parent dir.
+        // `File::create` would follow it; the containment guard must refuse and leave the
+        // pointed-at file untouched.
+        let tmp = tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        let outside = tmp.path().join("outside.txt");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(&outside, b"original").unwrap();
+        symlink(&outside, dest.join("evil")).unwrap();
+
+        let tgz = make_tar_gz(&[("package/evil", b"owned")]);
+        let result = tar_gz(&tgz, &dest, Some("package/"), Select::All);
+
+        assert!(
+            result.is_err(),
+            "must refuse to write through a leaf symlink"
+        );
+        assert_eq!(
+            std::fs::read(&outside).unwrap(),
+            b"original",
+            "the symlink's target must be untouched"
+        );
+    }
+
+    #[test]
     fn odd_but_legal_entry_names_stay_contained() {
         // Scary-looking but non-traversal entry names must land *under* `dest`, never escape:
         // `...` and `~` are ordinary directory names, and `file://` is just part of a filename
