@@ -17,7 +17,9 @@ use crate::registry::Resolved;
 /// darwin-only `fsevents` on Linux), verifies each `sha512` integrity, extracts it to the path the
 /// lockfile names, and creates `node_modules/.bin/` symlinks — so installed CLIs (`tsc`,
 /// `playwright`, …) run as under npm, with only the Node runtime, no `npm`. Skip-if-unchanged on
-/// the lockfile's content hash. Returns the installed set, sorted by install path.
+/// the lockfile's content hash. A *failed* on-platform optional dependency (a download or verify
+/// error) is warned and skipped rather than aborting, as `npm ci` does. Returns the installed set
+/// — any skipped optional omitted — sorted by install path.
 pub fn from_lockfile(
     package_lock: &Path,
     dest: &Path,
@@ -32,18 +34,43 @@ pub fn from_lockfile(
     // The lockfile fully determines the tree, so its content hash is the cache key.
     let want = crate::cache::file_hash(package_lock)?;
 
+    let mut installed_idx: Vec<usize> = Vec::new();
+    let mut populated = false;
     super::run_install(dest, &want, |node_modules| {
-        for pkg in &installable {
+        populated = true;
+        for (i, pkg) in installable.iter().enumerate() {
             // The key (`node_modules/…`) is validated into a contained path under `dest`.
             let dir = safe_join(dest, &pkg.key)?;
             let url = pkg.resolved.as_deref().unwrap_or_default();
-            super::fetch_verify_extract(&pkg.name, url, pkg.integrity.as_deref(), &dir)?;
+            match super::fetch_verify_extract(&pkg.name, url, pkg.integrity.as_deref(), &dir) {
+                Ok(()) => installed_idx.push(i),
+                // npm ci treats a failed *optional* dependency as non-fatal: warn and skip it
+                // rather than aborting the whole install.
+                Err(e) if pkg.optional || pkg.dev_optional => {
+                    eprintln!(
+                        "npm-utils: optional dependency `{}` failed to install ({e}); skipping",
+                        pkg.name
+                    );
+                }
+                Err(e) => return Err(e),
+            }
         }
-        link_bins(node_modules, &installable)?;
+        // Link bins only for packages that actually landed.
+        let installed_pkgs: Vec<&LockedPackage> =
+            installed_idx.iter().map(|&i| installable[i]).collect();
+        link_bins(node_modules, &installed_pkgs)?;
         Ok(())
     })?;
 
-    installable
+    // On a populate run, report exactly what installed (a failed optional is omitted). On a
+    // skip-if-unchanged cache hit, the prior run's full set is already present on disk.
+    let result_set: Vec<&LockedPackage> = if populated {
+        installed_idx.iter().map(|&i| installable[i]).collect()
+    } else {
+        installable.clone()
+    };
+
+    result_set
         .iter()
         .map(|pkg| {
             let version = Version::parse(&pkg.version).map_err(|e| {
@@ -300,5 +327,49 @@ mod tests {
         // Idempotent: the lockfile-hash marker short-circuits the second call.
         let again = from_lockfile(&lock, tmp.path()).unwrap();
         assert_eq!(again.len(), 1);
+    }
+
+    #[test]
+    #[ignore = "network: fetches ms from the npm registry"]
+    fn tolerates_a_failing_onplatform_optional() {
+        // `ms@2.1.3` is a frozen package with a known sha512. `flaky-optional` is `optional` with
+        // NO os/cpu constraint (so it is on-platform here) and a bogus URL that can't be fetched —
+        // `npm ci` tolerates a failed optional, so the install must succeed with just `ms`.
+        let tmp = tempdir().unwrap();
+        let lock = tmp.path().join("package-lock.json");
+        std::fs::write(
+            &lock,
+            r#"{
+              "name": "fixture",
+              "lockfileVersion": 3,
+              "packages": {
+                "": { "name": "fixture", "dependencies": { "ms": "2.1.3" } },
+                "node_modules/ms": {
+                  "version": "2.1.3",
+                  "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+                  "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="
+                },
+                "node_modules/flaky-optional": {
+                  "version": "1.0.0",
+                  "resolved": "https://example.invalid/never-resolves.tgz",
+                  "integrity": "sha512-AAAA",
+                  "optional": true
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let installed = from_lockfile(&lock, tmp.path()).unwrap();
+        let names: Vec<&str> = installed.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["ms"],
+            "a failing optional dep is skipped, not fatal"
+        );
+
+        let nm = tmp.path().join("node_modules");
+        assert!(nm.join("ms/package.json").is_file());
+        assert!(!nm.join("flaky-optional").exists());
     }
 }
