@@ -39,9 +39,9 @@ pub(super) fn sync(dir: &Path, doc: &Value) -> Res {
         .get("version")
         .and_then(Value::as_str)
         .unwrap_or("1.0.0");
-    std::fs::write(
-        dir.join("package-lock.json"),
-        lock::render_v3(name, version, &direct, &entries),
+    write_atomic(
+        &dir.join("package-lock.json"),
+        &lock::render_v3(name, version, &direct, &entries),
     )?;
 
     report_installed(&from_lockfile(&dir.join("package-lock.json"), dir)?);
@@ -69,9 +69,27 @@ pub(super) fn read_manifest(dir: &Path) -> Res<Value> {
     Ok(doc)
 }
 
-/// Write a manifest back as pretty JSON (npm's two-space indent + trailing newline).
+/// Write a manifest back as pretty JSON (npm's two-space indent + trailing newline), atomically.
 pub(super) fn write_manifest(dir: &Path, doc: &Value) -> Res {
-    std::fs::write(dir.join("package.json"), manifest::to_pretty(doc))?;
+    write_atomic(&dir.join("package.json"), &manifest::to_pretty(doc))
+}
+
+/// Write `contents` to `path` atomically: write a sibling temp file, then rename it over the
+/// target — so a crash mid-write can't leave a truncated `package.json` / `package-lock.json`
+/// (either the old file or the complete new one is present). The temp shares the target's
+/// directory (same filesystem → the rename is atomic) and is cleaned up if the rename fails.
+pub(super) fn write_atomic(path: &Path, contents: &str) -> Res {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("package.json");
+    let tmp = dir.join(format!(".{file_name}.tmp.{}", std::process::id()));
+    std::fs::write(&tmp, contents).map_err(|e| format!("writing {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("replacing {}: {e}", path.display())
+    })?;
     Ok(())
 }
 
@@ -128,5 +146,23 @@ mod tests {
         assert_eq!(bump_floor("3.1.0", &v), None);
         assert_eq!(bump_floor("*", &v), None);
         assert_eq!(bump_floor(">=3 <4", &v), None);
+    }
+
+    #[test]
+    fn write_atomic_replaces_and_leaves_no_temp() {
+        use tempfile::tempdir;
+        let tmp = tempdir().unwrap();
+        let target = tmp.path().join("package.json");
+        std::fs::write(&target, "OLD").unwrap();
+        write_atomic(&target, "NEW").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "NEW");
+        let temp_left = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| e.file_name().to_string_lossy().contains(".tmp."));
+        assert!(
+            !temp_left,
+            "no temp file should remain after an atomic write"
+        );
     }
 }
