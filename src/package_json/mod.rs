@@ -72,10 +72,12 @@ pub fn parse_dependencies(
     Ok(dependencies)
 }
 
-/// Reject npm package names whose characters could escape a path or URL. npm
-/// restricts names to lowercase letters, digits, `.`, `_`, `-`, `@`, and `/`
-/// (scoped). Anything else is a typo or a crafted entry meant to traverse a
-/// path later — fail loudly.
+/// Reject npm package names whose characters could escape a path or URL — a path-safety allowlist,
+/// not a spec validator. Allowed: ASCII alphanumerics plus `.`, `_`, `-`, `@`, and `/` (scoped);
+/// empty, over-long, and any `..` are rejected. Case is intentionally *not* restricted: npm steers
+/// new packages to lowercase, but the registry still hosts legacy mixed-case names, and a truly
+/// invalid name simply 404s — enforcing case here would only reject valid installs. Anything
+/// outside the allowlist is a typo or a crafted entry meant to traverse a path later — fail loudly.
 fn validate_package_name(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     if name.is_empty() || name.len() > 200 {
         return Err(format!("package name {name:?} has invalid length").into());
