@@ -4,7 +4,7 @@
 use std::fs::{self, create_dir_all};
 use std::io::{Read, Write};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Run `f` while holding an exclusive cross-process lock on `lock_path`.
 ///
@@ -21,8 +21,6 @@ pub fn with_lock<F: FnOnce() -> R, R>(lock_path: &Path) -> impl FnOnce(F) -> R {
         if let Some(parent) = lock_path.parent() {
             let _ = create_dir_all(parent);
         }
-        let start = Instant::now();
-        let max_wait = Duration::from_secs(120);
         loop {
             match fs::OpenOptions::new()
                 .write(true)
@@ -37,11 +35,12 @@ pub fn with_lock<F: FnOnce() -> R, R>(lock_path: &Path) -> impl FnOnce(F) -> R {
                     return result;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if start.elapsed() > max_wait {
+                    if lock_is_stale(&lock_path) {
                         eprintln!(
-                            "npm-utils: lock at {} held for {}s — assuming stale and continuing",
+                            "npm-utils: lock at {} looks stale (file older than {}s) — \
+                             removing and continuing",
                             lock_path.display(),
-                            start.elapsed().as_secs()
+                            STALE_LOCK.as_secs()
                         );
                         let _ = fs::remove_file(&lock_path);
                         continue;
@@ -56,6 +55,25 @@ pub fn with_lock<F: FnOnce() -> R, R>(lock_path: &Path) -> impl FnOnce(F) -> R {
             }
         }
     }
+}
+
+/// A lock whose file is older than this is treated as abandoned by a crashed holder and reclaimed.
+/// Judged by the lock file's real age (its mtime) — not any single waiter's elapsed wait — so all
+/// waiters agree, and a long-but-live install isn't preempted at the old 2-minute mark.
+///
+/// Heuristic, not airtight: a holder genuinely running longer than this could still be preempted
+/// (a true fix needs PID-liveness or a heartbeat). Ten minutes clears any realistic install.
+const STALE_LOCK: Duration = Duration::from_secs(600);
+
+/// Whether the lock file's age exceeds [`STALE_LOCK`]. A missing/unreadable timestamp, or a clock
+/// skew (mtime in the future → `elapsed()` errors), reads as *not* stale: keep waiting rather than
+/// risk yanking a lock a live holder still owns.
+fn lock_is_stale(lock_path: &Path) -> bool {
+    fs::metadata(lock_path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age > STALE_LOCK)
 }
 
 /// Whether a directory exists and contains at least one entry.
@@ -170,5 +188,20 @@ mod tests {
         let out = with_lock(&lock)(|| 42);
         assert_eq!(out, 42);
         assert!(!lock.exists(), "lock should be released");
+    }
+
+    #[test]
+    fn fresh_and_missing_locks_are_not_stale() {
+        let tmp = tempdir().unwrap();
+        let lock = tmp.path().join(".lock");
+        fs::write(&lock, "123\n").unwrap();
+        assert!(
+            !lock_is_stale(&lock),
+            "a just-created lock must not be considered stale"
+        );
+        assert!(
+            !lock_is_stale(&tmp.path().join("absent")),
+            "a missing lock reads as not stale (keep waiting)"
+        );
     }
 }
