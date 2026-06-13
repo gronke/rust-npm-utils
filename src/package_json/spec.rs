@@ -106,7 +106,7 @@ impl Range {
     /// Parse an npm range. `||` separates alternatives; within one, npm's space-separated
     /// comparators are joined with commas for `semver`. A bare full version is an exact pin;
     /// `*`/`x`/empty/`latest` match anything.
-    pub fn parse(spec: &str) -> Result<Range, semver::Error> {
+    pub fn parse(spec: &str) -> Result<Range, Box<dyn std::error::Error>> {
         let spec = spec.trim();
         if spec.is_empty() || spec == "*" || spec == "x" || spec == "latest" {
             return Ok(Range::any());
@@ -133,8 +133,8 @@ impl From<VersionReq> for Range {
 }
 
 impl std::str::FromStr for Range {
-    type Err = semver::Error;
-    fn from_str(s: &str) -> Result<Range, semver::Error> {
+    type Err = Box<dyn std::error::Error>;
+    fn from_str(s: &str) -> Result<Range, Self::Err> {
         Range::parse(s)
     }
 }
@@ -152,15 +152,36 @@ impl std::fmt::Display for Range {
 }
 
 /// Parse one `||`-free alternative: a bare full version → an exact pin; otherwise npm's
-/// space-separated comparators joined with commas (what `semver` expects).
-fn parse_alternative(alt: &str) -> Result<VersionReq, semver::Error> {
+/// space-separated comparators joined with commas (what `semver` expects). A bare alphabetic word
+/// is reported as an unsupported npm dist-tag rather than leaking a cryptic semver error.
+fn parse_alternative(alt: &str) -> Result<VersionReq, Box<dyn std::error::Error>> {
     if alt.is_empty() || alt == "*" || alt == "x" {
         return Ok(VersionReq::STAR);
     }
     if Version::parse(alt).is_ok() {
-        return VersionReq::parse(&format!("={alt}"));
+        return Ok(VersionReq::parse(&format!("={alt}"))?);
     }
-    VersionReq::parse(&alt.split_whitespace().collect::<Vec<_>>().join(", "))
+    // A bare alphabetic word (`next`, `beta`, …) is an npm dist-tag, not a semver range. We don't
+    // resolve dist-tags (that needs a `dist-tags` lookup), so say so clearly. (`latest` is mapped
+    // to `*` earlier, in `Range::parse`.)
+    if looks_like_dist_tag(alt) {
+        return Err(format!(
+            "version {alt:?} looks like an npm dist-tag, which npm-utils doesn't resolve — pin a \
+             semver version or range (e.g. `^1.2.3`), or install from a package-lock.json"
+        )
+        .into());
+    }
+    Ok(VersionReq::parse(
+        &alt.split_whitespace().collect::<Vec<_>>().join(", "),
+    )?)
+}
+
+/// Whether `s` has the shape of an npm dist-tag — a bare word `[A-Za-z][A-Za-z0-9-]*` — as opposed
+/// to a semver range (which begins with a digit or a comparator like `^`/`~`/`>`/`<`/`=`). Used
+/// only to turn an unsupported tag into a clear error.
+fn looks_like_dist_tag(s: &str) -> bool {
+    matches!(s.chars().next(), Some(c) if c.is_ascii_alphabetic())
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 /// Build a [`Spec::Git`], splitting off a `#committish` if present.
@@ -261,6 +282,22 @@ mod tests {
         assert!(!Range::parse("1.2.3").unwrap().matches(&v("1.2.4")));
         assert!(Range::any().matches(&v("9.9.9")));
         assert!(Range::parse("*").unwrap().matches(&v("9.9.9")));
+    }
+
+    #[test]
+    fn rejects_dist_tags_with_a_clear_message() {
+        // `latest` resolves (≈ any); other dist-tags aren't supported, and must say so clearly
+        // rather than leak a raw semver parse error.
+        assert!(Range::parse("latest").is_ok());
+        for tag in ["next", "beta", "canary"] {
+            let err = Range::parse(tag).unwrap_err().to_string();
+            assert!(
+                err.contains("dist-tag"),
+                "{tag:?} should give a dist-tag error, got: {err}"
+            );
+        }
+        // A real range still parses.
+        assert!(Range::parse("^1.2.3").is_ok());
     }
 
     #[test]
