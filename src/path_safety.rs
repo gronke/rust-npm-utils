@@ -68,7 +68,17 @@ pub fn contained_target(root: &Path, out: &Path) -> Result<PathBuf, Box<dyn std:
         .file_name()
         .ok_or_else(|| -> Box<dyn std::error::Error> { "path has no file name".into() })?;
     // Write into the *resolved* directory, so the final write can't be re-redirected.
-    Ok(real_parent.join(name))
+    let target = real_parent.join(name);
+    if let Ok(meta) = std::fs::symlink_metadata(&target) {
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "unsafe path {out:?}: destination already exists as a symlink \
+                 (refuses to write through it)"
+            )
+            .into());
+        }
+    }
+    Ok(target)
 }
 
 #[cfg(test)]
@@ -136,5 +146,24 @@ mod tests {
         assert!(contained_target(&root, &dest).is_err());
         // A child under the root is allowed.
         assert!(contained_target(&root, &dest.join("file.js")).is_ok());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn contained_target_refuses_a_preexisting_leaf_symlink() {
+        use std::os::unix::fs::symlink;
+        // The parent is contained, but the *leaf* itself is a pre-existing symlink pointing
+        // outside `root`. `File::create` would follow it, so contained_target must refuse.
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        let outside = tmp.path().join("outside.txt");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(&outside, b"original").unwrap();
+        let root = dest.canonicalize().unwrap();
+        symlink(&outside, dest.join("leaf")).unwrap();
+        assert!(
+            contained_target(&root, &dest.join("leaf")).is_err(),
+            "a pre-existing leaf symlink must be refused"
+        );
     }
 }
