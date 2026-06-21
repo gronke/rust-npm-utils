@@ -7,44 +7,20 @@ use serde_json::Value;
 
 use super::Res;
 use crate::install::from_lockfile;
-use crate::package_json::{lock, manifest, spec};
+use crate::package_json::{lock, manifest};
 use crate::registry::{Registry, Resolved};
 
-/// Make `package-lock.json` + `node_modules/` a function of the manifest: resolve the full
-/// registry dependency tree, write a fresh v3 lockfile, and install from it (every tarball's
-/// sha512 verified). Non-registry deps (git/file) are recorded in the manifest but not resolved.
+/// Make `package-lock.json` + `node_modules/` a function of the manifest: write a fresh v3
+/// lockfile from the resolved registry dependency tree (via [`lock::render_v3_from_manifest`],
+/// licenses and all), then install from it (every tarball's sha512 verified). Non-registry
+/// deps (git/`file:`) are recorded in the manifest but not resolved.
 pub(super) fn sync(dir: &Path, doc: &Value) -> Res {
-    let direct = manifest::dependencies(doc);
-    let roots: Vec<(String, spec::Range)> = direct
-        .iter()
-        .filter(|(_, range)| spec::Spec::parse(range).is_registry())
-        .map(|(name, range)| -> Res<(String, spec::Range)> {
-            Ok((name.clone(), spec::Range::parse(range)?))
-        })
-        .collect::<Res<Vec<_>>>()?;
-
-    let resolved = Registry::npm().resolve_tree(&roots)?;
-    let entries: Vec<lock::LockEntry> = resolved
-        .iter()
-        .map(|r| lock::LockEntry {
-            name: r.name.clone(),
-            version: r.version.to_string(),
-            resolved: r.tarball_url.clone(),
-            integrity: r.integrity.clone(),
-        })
-        .collect();
-
-    let name = doc.get("name").and_then(Value::as_str).unwrap_or("");
-    let version = doc
-        .get("version")
-        .and_then(Value::as_str)
-        .unwrap_or("1.0.0");
+    let lockfile = dir.join("package-lock.json");
     std::fs::write(
-        dir.join("package-lock.json"),
-        lock::render_v3(name, version, &direct, &entries),
+        &lockfile,
+        lock::render_v3_from_manifest(doc, &Registry::npm())?,
     )?;
-
-    report_installed(&from_lockfile(&dir.join("package-lock.json"), dir)?);
+    report_installed(&from_lockfile(&lockfile, dir)?);
     Ok(())
 }
 
