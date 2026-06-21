@@ -30,6 +30,7 @@ mod download;
 mod init;
 mod install;
 mod resolve;
+mod sbom;
 mod upgrade;
 
 /// This module's ubiquitous fallible return — `()` by default.
@@ -39,7 +40,7 @@ pub(crate) type Res<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>
 #[command(
     name = "npm-utils",
     version,
-    about = "Pure-Rust npm registry tools: install · ci · add · init · upgrade"
+    about = "Pure-Rust npm registry tools: install · ci · add · init · upgrade · sbom"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -105,6 +106,18 @@ enum Command {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Render a bill of materials from package-lock.json: a license summary, CycloneDX, or SPDX.
+    Sbom {
+        /// Project directory containing package-lock.json.
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+        /// Output format.
+        #[arg(long, default_value = "summary")]
+        format: sbom::Format,
+        /// Name for the SBOM's root component / document (default: the directory name).
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 /// Parse `argv` and dispatch to the verb's submodule. `argv` is taken explicitly (not
@@ -119,6 +132,7 @@ pub fn run(argv: impl IntoIterator<Item = OsString>) -> Res {
         Command::Upgrade { packages, dir } => upgrade::run(&packages, &dir),
         Command::Resolve { name, range } => resolve::run(&name, &range),
         Command::Download { name, range, out } => download::run(&name, &range, out.as_deref()),
+        Command::Sbom { dir, format, name } => sbom::run(&dir, format, name.as_deref()),
     }
 }
 
@@ -187,6 +201,8 @@ mod tests {
             osv(&["npm-utils", "upgrade"]),
             osv(&["npm-utils", "resolve", "lit", "^3"]),
             osv(&["npm-utils", "download", "ms", "--out", "/tmp/ms.tgz"]),
+            osv(&["npm-utils", "sbom", "/tmp/x", "--format", "cyclonedx"]),
+            osv(&["npm-utils", "sbom", "--format", "spdx", "--name", "demo"]),
         ] {
             assert!(Cli::try_parse_from(argv).is_ok());
         }

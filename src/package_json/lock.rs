@@ -38,6 +38,10 @@ pub struct LockedPackage {
     pub resolved: Option<String>,
     /// `integrity` — the Subresource-Integrity string (`sha512-…`); `None` if absent.
     pub integrity: Option<String>,
+    /// `license` — the package's declared SPDX license string, when the lockfile records one
+    /// (npm writes it per package; so does this crate's [`render_v3`]). `None` if absent.
+    /// Read so SBOM/compliance output ([`crate::sbom`]) can carry it.
+    pub license: Option<String>,
     /// `dev` — strictly in the devDependencies tree.
     pub dev: bool,
     /// `optional` — strictly in the optionalDependencies tree.
@@ -254,6 +258,7 @@ impl LockedPackage {
             version: string_field(entry, "version"),
             resolved: opt_string(entry, "resolved"),
             integrity: opt_string(entry, "integrity"),
+            license: opt_string(entry, "license"),
             dev: bool_field(entry, "dev"),
             optional: bool_field(entry, "optional"),
             dev_optional: bool_field(entry, "devOptional"),

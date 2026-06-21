@@ -175,6 +175,7 @@ mod tests {
             version: "1.0.0".into(),
             resolved: None,
             integrity: None,
+            license: None,
             dev: false,
             optional: false,
             dev_optional: false,

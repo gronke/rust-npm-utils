@@ -35,6 +35,10 @@ It's both a **library** (the modules below) and an optional **command-line tool*
   darwin-only `fsevents` on Linux) are skipped, and `node_modules/.bin/` shims are created.
   That installs a project's Node test tooling (Playwright, `tsc`) without `npm` — only the Node
   runtime is needed to then run it.
+- **`sbom`** — turn a parsed `package-lock.json` into a vendor-neutral bill of materials: a
+  plain-text **license summary**, a **CycloneDX 1.6** document, or an **SPDX 2.3** document — each
+  package carrying its purl (`pkg:npm/…`), declared license, and `sha512` hash. Pure (no IO):
+  compliance artifacts straight from a committed lock, no Node.
 
 ## Examples
 
@@ -63,6 +67,19 @@ npm_utils::install::from_lockfile(&project.join("package-lock.json"), project)?;
 # Ok(()) }
 ```
 
+Generate a license summary — or a CycloneDX / SPDX SBOM — from a committed lock:
+
+```rust,no_run
+use npm_utils::{package_json::lock::Lockfile, sbom};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let lock = Lockfile::parse(&std::fs::read_to_string("package-lock.json")?)?;
+let bom = sbom::components(&lock);
+print!("{}", sbom::render_summary(&bom));                              // license overview
+std::fs::write("sbom.cdx.json", sbom::to_cyclonedx(&bom, "my-app", "1.0.0", None))?;
+# Ok(()) }
+```
+
 See [`examples/date-converter`](examples/date-converter) for a runnable Lit +
 `Temporal` demo that vendors its dependencies with this crate.
 
@@ -87,11 +104,14 @@ standalone *or* as a cargo subcommand (`npm-utils add lit` ≡ `cargo npm-utils 
 | `upgrade [pkg…]` | `npm update` | re-resolve within ranges, refresh the lock, install |
 | `resolve <pkg> [range]` | — | print the newest matching version (tarball + integrity) |
 | `download <pkg> [range]` | `npm pack` | fetch a package tarball |
+| `sbom [dir] [--format f]` | — | bill of materials from the lock: `summary` · `cyclonedx` · `spdx` |
 
 ```bash
 cargo npm-utils init --name demo
 cargo npm-utils add lit@^3 @lit/context   # resolve, write package.json + lock, install
 cargo npm-utils ci                        # reproduce the locked tree, integrity-checked
+cargo npm-utils sbom                      # license summary: which packages, which licenses
+cargo npm-utils sbom --format cyclonedx > sbom.cdx.json   # a CycloneDX SBOM for compliance
 ```
 
 `add`/`upgrade` write a `lockfileVersion`-3 `package-lock.json` that both npm and
