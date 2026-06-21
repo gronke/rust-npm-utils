@@ -8,7 +8,12 @@
 //! parser stays pure and the path-safety check lives with the installer. lockfileVersion 1 (the
 //! legacy hierarchical `dependencies` tree, with no `packages` map) is unsupported.
 
+use std::path::Path;
+
 use serde_json::{Map, Value};
+
+use super::{manifest, spec};
+use crate::registry::Registry;
 
 /// A parsed `package-lock.json`.
 #[derive(Debug, Clone)]
@@ -109,6 +114,9 @@ pub struct LockEntry {
     pub resolved: String,
     /// The `sha512-…` Subresource-Integrity, when the registry advertised one.
     pub integrity: Option<String>,
+    /// The package's declared SPDX license, recorded for license/compliance tooling
+    /// (npm's own lockfiles carry it too).
+    pub license: Option<String>,
 }
 
 /// Render a `lockfileVersion`-3 `package-lock.json` for a **flat** dependency tree: a root `""`
@@ -155,6 +163,9 @@ pub fn render_v3(
         if let Some(integrity) = &entry.integrity {
             pkg.insert("integrity".into(), json!(integrity));
         }
+        if let Some(license) = &entry.license {
+            pkg.insert("license".into(), json!(license));
+        }
         packages.insert(format!("node_modules/{}", entry.name), Value::Object(pkg));
     }
 
@@ -168,6 +179,65 @@ pub fn render_v3(
     let mut out = serde_json::to_string_pretty(&doc).expect("serialize package-lock.json");
     out.push('\n');
     out
+}
+
+/// Resolve a `package.json`-shaped manifest's **registry** dependencies into a flat tree and
+/// render it as a `lockfileVersion`-3 `package-lock.json` string (with per-package `license`).
+/// Talks to `registry` over the network but touches no filesystem and installs no
+/// `node_modules/` — the lockfile-only half of `add`/`upgrade`. Non-registry deps (git /
+/// `file:`) are skipped: recorded in the manifest, but not resolvable to a registry tarball.
+pub fn render_v3_from_manifest(
+    doc: &Value,
+    registry: &Registry,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let direct = manifest::dependencies(doc);
+    let roots: Vec<(String, spec::Range)> = direct
+        .iter()
+        .filter(|(_, range)| spec::Spec::parse(range).is_registry())
+        .map(
+            |(name, range)| -> Result<(String, spec::Range), Box<dyn std::error::Error>> {
+                Ok((name.clone(), spec::Range::parse(range)?))
+            },
+        )
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let entries: Vec<LockEntry> = registry
+        .resolve_tree(&roots)?
+        .into_iter()
+        .map(|r| LockEntry {
+            name: r.name,
+            version: r.version.to_string(),
+            resolved: r.tarball_url,
+            integrity: r.integrity,
+            license: r.license,
+        })
+        .collect();
+
+    let name = doc.get("name").and_then(Value::as_str).unwrap_or("");
+    let version = doc
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("0.0.0");
+    Ok(render_v3(name, version, &direct, &entries))
+}
+
+/// Read a `package.json`-shaped manifest and (re)write its `package-lock.json` from the
+/// registry — pure Rust, no Node, no npm, no `node_modules/`. This is the "update the
+/// lockfile" primitive for build scripts and vendoring flows (where the lock is a manifest of
+/// resolved versions + licenses, not an install); [`render_v3_from_manifest`] is the in-memory
+/// core. Resolves against the public npm registry.
+pub fn write_from_manifest(
+    manifest_path: &Path,
+    lockfile_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let text = std::fs::read_to_string(manifest_path)
+        .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
+    let doc: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("parsing {}: {e}", manifest_path.display()))?;
+    let lockfile = render_v3_from_manifest(&doc, &Registry::npm())?;
+    std::fs::write(lockfile_path, lockfile)
+        .map_err(|e| format!("writing {}: {e}", lockfile_path.display()))?;
+    Ok(())
 }
 
 impl LockedPackage {
@@ -413,12 +483,14 @@ mod tests {
                 version: "2.1.3".into(),
                 resolved: "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz".into(),
                 integrity: Some("sha512-MS".into()),
+                license: Some("MIT".into()),
             },
             LockEntry {
                 name: "@scope/pkg".into(),
                 version: "1.0.0".into(),
                 resolved: "https://registry.npmjs.org/@scope/pkg/-/pkg-1.0.0.tgz".into(),
                 integrity: Some("sha512-SP".into()),
+                license: None,
             },
         ];
         let direct = vec![("ms".to_string(), "^2".to_string())];
@@ -438,6 +510,12 @@ mod tests {
         );
         // The root "" entry records the direct dependency ranges from package.json.
         assert_eq!(doc["packages"][""]["dependencies"]["ms"], "^2");
+
+        // A declared license is emitted per package; omitted when None.
+        assert_eq!(doc["packages"]["node_modules/ms"]["license"], "MIT");
+        assert!(doc["packages"]["node_modules/@scope/pkg"]
+            .get("license")
+            .is_none());
 
         // It parses back as a v3 lock; the two registry entries are installable (root "" and
         // any link excluded), sorted by key, with integrity + resolved threaded through.
