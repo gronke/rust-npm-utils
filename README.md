@@ -97,7 +97,7 @@ standalone *or* as a cargo subcommand (`npm-utils add lit` ≡ `cargo npm-utils 
 
 | Command | npm | What it does |
 |---------|-----|--------------|
-| `install [dir]` | `npm install` | resolve `package.json`'s `dependencies` → `node_modules/` |
+| `install [dir]` | `npm install` | resolve `dependencies` → write `package-lock.json` + install `node_modules/` (`--lockfile-only` writes just the lock; `--no-lockfile` skips it) |
 | `ci [dir]` | `npm ci` | install the exact tree a `package-lock.json` pins |
 | `add <pkg…> [--dir d]` | `npm install <pkg>` | resolve, record in `package.json`, write the lock, install |
 | `init [--name n]` | `npm init -y` | scaffold a `package.json` |
@@ -112,9 +112,13 @@ cargo npm-utils add lit@^3 @lit/context   # resolve, write package.json + lock, 
 cargo npm-utils ci                        # reproduce the locked tree, integrity-checked
 cargo npm-utils sbom                      # license summary: which packages, which licenses
 cargo npm-utils sbom --format cyclonedx > sbom.cdx.json   # a CycloneDX SBOM for compliance
+
+# Just want a lockfile — e.g. to SBOM a project — without installing node_modules:
+cargo npm-utils install --lockfile-only   # write package-lock.json only (no node_modules/)
+cargo npm-utils sbom                       # then render the bill of materials from it
 ```
 
-`add`/`upgrade` write a `lockfileVersion`-3 `package-lock.json` that both npm and
+`install`/`add`/`upgrade` write a `lockfileVersion`-3 `package-lock.json` that both npm and
 `npm-utils ci` read — every tarball pinned with its `sha512`. It is an npm-compatible
 lock for the **registry/production tree**, not a byte-for-byte npm reproduction
 (dev/optional classification and peer/bundle dependencies are out of scope). The CLI

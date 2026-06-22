@@ -5,7 +5,8 @@
 //! the shared helpers they lean on (manifest read/write, the lock+install `sync` that `add` and
 //! `upgrade` both run, install reporting) live in the `common` submodule.
 //!
-//! - `install` — resolve `package.json`'s `dependencies` and install `node_modules/` (= `npm install`).
+//! - `install` — resolve `package.json`'s `dependencies`, write `package-lock.json`, and install
+//!   `node_modules/` (= `npm install`); `--lockfile-only` / `--no-lockfile` toggle each half.
 //! - `ci` — install the exact tree a `package-lock.json` pins (= `npm ci`).
 //! - `add` — resolve package(s), record them in `package.json`, write `package-lock.json`, install.
 //! - `init` — scaffold a `package.json` (= `npm init -y`).
@@ -49,11 +50,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Install all `dependencies` from package.json into `node_modules/` (= `npm install`).
+    /// Resolve `dependencies`, write `package-lock.json`, and install `node_modules/`
+    /// (= `npm install`).
     Install {
         /// Project directory containing package.json.
         #[arg(default_value = ".")]
         dir: PathBuf,
+        /// Write package-lock.json but skip installing node_modules/
+        /// (= npm `--package-lock-only`, pnpm `--lockfile-only`).
+        #[arg(
+            long,
+            visible_alias = "package-lock-only",
+            conflicts_with = "no_lockfile"
+        )]
+        lockfile_only: bool,
+        /// Install node_modules/ without writing package-lock.json
+        /// (= yarn `--no-lockfile`, npm `--no-package-lock`).
+        #[arg(long, visible_alias = "no-package-lock")]
+        no_lockfile: bool,
     },
     /// Install the exact tree pinned by package-lock.json into `node_modules/` (= `npm ci`).
     Ci {
@@ -125,7 +139,11 @@ enum Command {
 /// before handing off.
 pub fn run(argv: impl IntoIterator<Item = OsString>) -> Res {
     match Cli::parse_from(argv).command {
-        Command::Install { dir } => install::run(&dir),
+        Command::Install {
+            dir,
+            lockfile_only,
+            no_lockfile,
+        } => install::run(&dir, lockfile_only, no_lockfile),
         Command::Ci { dir } => ci::run(&dir),
         Command::Add { packages, dir } => add::run(&packages, &dir),
         Command::Init { dir, name } => init::run(&dir, name.as_deref()),
@@ -195,6 +213,8 @@ mod tests {
         // A smoke test that the clap grammar accepts each verb (no dispatch/network).
         for argv in [
             osv(&["npm-utils", "install"]),
+            osv(&["npm-utils", "install", "web", "--lockfile-only"]),
+            osv(&["npm-utils", "install", "--no-lockfile"]),
             osv(&["npm-utils", "ci", "/tmp/x"]),
             osv(&["npm-utils", "add", "lit@^3", "--dir", "/tmp/x"]),
             osv(&["npm-utils", "init", "--name", "demo"]),
@@ -208,5 +228,13 @@ mod tests {
         }
         // `add` requires at least one package.
         assert!(Cli::try_parse_from(osv(&["npm-utils", "add"])).is_err());
+        // `install` can't both write only the lock and skip the lock.
+        assert!(Cli::try_parse_from(osv(&[
+            "npm-utils",
+            "install",
+            "--lockfile-only",
+            "--no-lockfile"
+        ]))
+        .is_err());
     }
 }
