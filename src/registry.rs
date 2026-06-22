@@ -34,6 +34,11 @@ pub struct Resolved {
     /// carries one — verified against the downloaded bytes before extraction. `None` for a
     /// synthesized tarball URL or a packument entry without `dist.integrity`.
     pub integrity: Option<String>,
+    /// The version's declared license, normalized to a single SPDX-ish string from the
+    /// packument's `license` string / legacy `{ "type": … }` object / `licenses[]` array.
+    /// `None` when the packument declares none. Carried so a generated lockfile can record
+    /// it for license/compliance tooling (npm's own lockfiles do the same).
+    pub license: Option<String>,
 }
 
 impl Registry {
@@ -75,7 +80,7 @@ impl Registry {
         range: &Range,
     ) -> Result<Resolved, Box<dyn std::error::Error>> {
         let doc = self.packument(name)?;
-        let (version, tarball, integrity) = select_version(&doc, range)
+        let (version, tarball, integrity, license) = select_version(&doc, range)
             .ok_or_else(|| format!("no published version of {name} matches {range}"))?;
         let tarball_url = tarball.unwrap_or_else(|| self.tarball_url(name, &version.to_string()));
         Ok(Resolved {
@@ -83,6 +88,7 @@ impl Registry {
             version,
             tarball_url,
             integrity,
+            license,
         })
     }
 
@@ -135,7 +141,7 @@ impl Registry {
                 packuments.insert(name.clone(), doc);
             }
             let doc = &packuments[&name];
-            let (version, tarball, integrity) = select_version(doc, &range)
+            let (version, tarball, integrity, license) = select_version(doc, &range)
                 .ok_or_else(|| format!("no published version of {name} matches {range}"))?;
             let deps = dependencies_of(doc, &version);
             let tarball_url =
@@ -157,6 +163,7 @@ impl Registry {
                     version,
                     tarball_url,
                     integrity,
+                    license,
                 },
             );
         }
@@ -166,12 +173,17 @@ impl Registry {
     }
 }
 
+/// The fields [`select_version`] extracts for the newest matching version:
+/// `(version, dist.tarball, dist.integrity, license)`.
+type SelectedVersion = (Version, Option<String>, Option<String>, Option<String>);
+
 /// Pick the newest version in a packument's `versions` map that satisfies the `range`,
-/// returning it with the `dist.tarball` URL and the `dist.integrity` SRI the registry
-/// advertises (each `None` if absent). Factored out for unit testing without network access.
-fn select_version(doc: &Value, range: &Range) -> Option<(Version, Option<String>, Option<String>)> {
+/// returning it with the `dist.tarball` URL, the `dist.integrity` SRI, and the declared
+/// `license` the registry advertises (each `None` if absent). Factored out for unit testing
+/// without network access.
+fn select_version(doc: &Value, range: &Range) -> Option<SelectedVersion> {
     let versions = doc.get("versions")?.as_object()?;
-    let mut best: Option<(Version, Option<String>, Option<String>)> = None;
+    let mut best: Option<SelectedVersion> = None;
     for (ver_str, meta) in versions {
         let Ok(ver) = Version::parse(ver_str) else {
             continue;
@@ -179,17 +191,48 @@ fn select_version(doc: &Value, range: &Range) -> Option<(Version, Option<String>
         if !range.matches(&ver) {
             continue;
         }
-        if best.as_ref().map(|(b, _, _)| ver > *b).unwrap_or(true) {
+        if best.as_ref().map(|(b, ..)| ver > *b).unwrap_or(true) {
             let dist = meta.get("dist");
             let string_at = |key: &str| {
                 dist.and_then(|d| d.get(key))
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
             };
-            best = Some((ver, string_at("tarball"), string_at("integrity")));
+            best = Some((
+                ver,
+                string_at("tarball"),
+                string_at("integrity"),
+                license_of(meta),
+            ));
         }
     }
     best
+}
+
+/// Normalize a packument version entry's license to a single SPDX-ish string. npm uses a
+/// `license` string today; older packages used a `{ "type": … }` object or a
+/// `licenses: [{ "type": … }]` array — collapse all three (joining a multi-entry array with
+/// `" OR "`), returning `None` when none is declared.
+fn license_of(meta: &Value) -> Option<String> {
+    match meta.get("license") {
+        Some(Value::String(s)) => return Some(s.clone()),
+        Some(Value::Object(o)) => {
+            if let Some(t) = o.get("type").and_then(Value::as_str) {
+                return Some(t.to_string());
+            }
+        }
+        _ => {}
+    }
+    let types: Vec<String> = meta
+        .get("licenses")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|l| l.get("type").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    (!types.is_empty()).then(|| types.join(" OR "))
 }
 
 /// The npm dependency-spec → [`VersionReq`] parser lives in the [`crate::package_json`] module
@@ -235,19 +278,25 @@ mod tests {
         let doc = json!({
             "versions": {
                 "3.1.0": { "dist": { "tarball": "https://r/lit-3.1.0.tgz" } },
-                "3.3.3": { "dist": {
-                    "tarball": "https://r/lit-3.3.3.tgz",
-                    "integrity": "sha512-deadbeef"
-                } },
+                "3.3.3": {
+                    "license": "BSD-3-Clause",
+                    "dist": {
+                        "tarball": "https://r/lit-3.3.3.tgz",
+                        "integrity": "sha512-deadbeef"
+                    }
+                },
                 "4.0.0": { "dist": { "tarball": "https://r/lit-4.0.0.tgz" } },
                 "2.9.9": {}
             }
         });
-        let (ver, tarball, integrity) = select_version(&doc, &"^3".parse().unwrap()).unwrap();
+        let (ver, tarball, integrity, license) =
+            select_version(&doc, &"^3".parse().unwrap()).unwrap();
         assert_eq!(ver, Version::parse("3.3.3").unwrap());
         assert_eq!(tarball.as_deref(), Some("https://r/lit-3.3.3.tgz"));
         // The registry's dist.integrity rides along so node_modules can verify the tarball.
         assert_eq!(integrity.as_deref(), Some("sha512-deadbeef"));
+        // The declared license rides along too, so a generated lockfile can record it.
+        assert_eq!(license.as_deref(), Some("BSD-3-Clause"));
     }
 
     #[test]
@@ -257,7 +306,8 @@ mod tests {
         let doc = json!({ "versions": {
             "1.0.0": { "dist": { "tarball": "https://r/x-1.0.0.tgz" } }
         }});
-        let (_, tarball, integrity) = select_version(&doc, &"^1".parse().unwrap()).unwrap();
+        let (_, tarball, integrity, _license) =
+            select_version(&doc, &"^1".parse().unwrap()).unwrap();
         assert_eq!(tarball.as_deref(), Some("https://r/x-1.0.0.tgz"));
         assert!(integrity.is_none());
     }
@@ -266,6 +316,28 @@ mod tests {
     fn select_version_none_when_no_match() {
         let doc = json!({ "versions": { "1.0.0": {}, "2.0.0": {} } });
         assert!(select_version(&doc, &"^5".parse().unwrap()).is_none());
+    }
+
+    #[test]
+    fn license_of_normalizes_string_object_and_array_forms() {
+        // Modern SPDX string (what nearly every package publishes today).
+        assert_eq!(
+            license_of(&json!({ "license": "MIT" })).as_deref(),
+            Some("MIT")
+        );
+        // Legacy `{ type }` object.
+        assert_eq!(
+            license_of(&json!({ "license": { "type": "Apache-2.0", "url": "x" } })).as_deref(),
+            Some("Apache-2.0")
+        );
+        // Legacy `licenses: [{ type }]` array → joined with " OR ".
+        assert_eq!(
+            license_of(&json!({ "licenses": [{ "type": "MIT" }, { "type": "Apache-2.0" }] }))
+                .as_deref(),
+            Some("MIT OR Apache-2.0")
+        );
+        // None declared.
+        assert_eq!(license_of(&json!({ "dist": {} })), None);
     }
 
     /// A one-version packument carrying a `dependencies` map, mirroring the registry's

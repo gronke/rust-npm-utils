@@ -84,6 +84,8 @@ pub fn from_lockfile(
                 version,
                 tarball_url: pkg.resolved.clone().unwrap_or_default(),
                 integrity: pkg.integrity.clone(),
+                // Install-side report only; the lockfile model carries no license here.
+                license: None,
             })
         })
         .collect()
