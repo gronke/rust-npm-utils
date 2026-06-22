@@ -24,6 +24,8 @@
 //!   ([`install::from_lockfile`]).
 //! - [`integrity`] — verify a downloaded tarball's `sha512` Subresource-Integrity (both
 //!   install paths check it before trusting bytes).
+//! - [`sbom`] — render the packages a `package-lock.json` pins as a license summary, a CycloneDX
+//!   1.6 document, or an SPDX 2.3 document — compliance artifacts, pure Rust, no Node.
 //!
 //! ```no_run
 //! use npm_utils::{download, extract, registry::Registry};
@@ -51,3 +53,5 @@ pub mod integrity;
 pub mod package_json;
 pub mod path_safety;
 pub mod registry;
+// License/SBOM output (license summary · CycloneDX · SPDX) for a parsed `package-lock.json`.
+pub mod sbom;

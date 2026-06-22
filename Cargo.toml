@@ -33,6 +33,9 @@ semver = "1"
 # npm-install / npm-ci-faithful. Small, widely-trusted crates, MSRV ≤ 1.77.2.
 sha2 = "0.10"
 base64 = "0.22"
+# Format the SBOM generation timestamp as RFC 3339 (`sbom::now_rfc3339`). `time` is already in the
+# tree (via `zip`); this only adds its `formatting` feature — no new dependency.
+time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
 
 # CLI only (feature `cli`). clap 4.5's MSRV (1.70) is below this crate's 1.77.2, so it does not
 # raise the library MSRV; optional, so it is absent from a default library build.
