@@ -62,26 +62,29 @@ struct Cli {
 }
 
 /// The shared `--skip-license` / `--no-skip-license` knob for the lockfile-writing verbs
-/// (`install`, `add`, `upgrade`). The default records license (the full packument); `--skip-license`
-/// uses the faster abbreviated packument and omits per-package license from the lockfile.
+/// (`install`, `add`, `upgrade`). The default skips license — the faster abbreviated packument —
+/// and `npm-utils sbom` recovers license from each package's package.json; `--no-skip-license`
+/// records it in the lockfile via the full packument.
 #[derive(Args)]
 struct LicenseOpts {
-    /// Record each package's license in package-lock.json (fetches the full packument). The default.
+    /// Record each package's license in package-lock.json (fetches the full packument).
     #[arg(long, conflicts_with = "skip_license")]
     no_skip_license: bool,
     /// Skip per-package license in package-lock.json for faster resolution (abbreviated packument).
+    /// The default.
     #[arg(long)]
     skip_license: bool,
 }
 
 impl LicenseOpts {
-    /// Which packument detail the lockfile writer should use. `--skip-license` uses the abbreviated
-    /// packument; the default and explicit `--no-skip-license` record license via the full one.
+    /// Which packument detail the lockfile writer should use. The default (and explicit
+    /// `--skip-license`) uses the abbreviated packument; `--no-skip-license` records license via the
+    /// full one.
     fn detail(&self) -> PackumentDetail {
-        if self.skip_license && !self.no_skip_license {
-            PackumentDetail::Abbreviated
-        } else {
+        if self.no_skip_license && !self.skip_license {
             PackumentDetail::Full
+        } else {
+            PackumentDetail::Abbreviated
         }
     }
 }
@@ -175,6 +178,10 @@ enum Command {
         /// Name for the SBOM's root component / document (default: the directory name).
         #[arg(long)]
         name: Option<String>,
+        /// Where to read each package's license: `auto` (lockfile, falling back to the installed
+        /// package.json), `lockfile`, or `package`.
+        #[arg(long, default_value = "auto")]
+        license_source: sbom::LicenseSource,
     },
 }
 
@@ -209,7 +216,12 @@ pub fn run(argv: impl IntoIterator<Item = OsString>) -> Res {
         } => upgrade::run(&packages, &dir, license.detail()),
         Command::Resolve { name, range } => resolve::run(&name, &range),
         Command::Download { name, range, out } => download::run(&name, &range, out.as_deref()),
-        Command::Sbom { dir, format, name } => sbom::run(&dir, format, name.as_deref()),
+        Command::Sbom {
+            dir,
+            format,
+            name,
+            license_source,
+        } => sbom::run(&dir, format, name.as_deref(), license_source),
     }
 }
 
@@ -342,8 +354,8 @@ mod tests {
             }
             .detail()
         };
-        // The default records license (Full); --skip-license uses the abbreviated packument.
-        assert_eq!(detail(false, false), PackumentDetail::Full);
+        // The default skips license (abbreviated); --no-skip-license records it (full packument).
+        assert_eq!(detail(false, false), PackumentDetail::Abbreviated);
         assert_eq!(detail(false, true), PackumentDetail::Full);
         assert_eq!(detail(true, false), PackumentDetail::Abbreviated);
     }
