@@ -20,10 +20,10 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
       # The package.json / package-lock.json schemas now live in the `package_json` module
       # (src/package_json/); run its strict spec-conformance suite as a named gate too.

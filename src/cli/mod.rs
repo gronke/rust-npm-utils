@@ -44,6 +44,17 @@ pub(crate) type Res<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>
     about = "Pure-Rust npm registry tools: install · ci · add · init · upgrade · sbom"
 )]
 struct Cli {
+    /// Overall download timeout in seconds (default 120). Applies to every registry/tarball fetch.
+    #[arg(
+        long,
+        global = true,
+        value_name = "SECS",
+        conflicts_with = "no_timeout"
+    )]
+    timeout: Option<u64>,
+    /// Disable the download timeout entirely (no overall or connect bound).
+    #[arg(long, global = true)]
+    no_timeout: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -138,7 +149,13 @@ enum Command {
 /// `std::env::args_os()`) so the `cargo-npm-utils` shim can strip the re-passed subcommand name
 /// before handing off.
 pub fn run(argv: impl IntoIterator<Item = OsString>) -> Res {
-    match Cli::parse_from(argv).command {
+    let cli = Cli::parse_from(argv);
+    // Apply the download-timeout flags before any fetch happens.
+    crate::download::set_timeouts(crate::download::Timeouts::from_cli(
+        cli.timeout,
+        cli.no_timeout,
+    ));
+    match cli.command {
         Command::Install {
             dir,
             lockfile_only,
@@ -236,5 +253,23 @@ mod tests {
             "--no-lockfile"
         ]))
         .is_err());
+    }
+
+    #[test]
+    fn cli_accepts_global_timeout_flags() {
+        // `--timeout <secs>` and `--no-timeout` are global: accepted before or after the verb.
+        assert!(Cli::try_parse_from(osv(&["npm-utils", "--timeout", "5", "install"])).is_ok());
+        assert!(Cli::try_parse_from(osv(&["npm-utils", "install", "--no-timeout"])).is_ok());
+        assert!(Cli::try_parse_from(osv(&["npm-utils", "--no-timeout", "ci", "/tmp/x"])).is_ok());
+        // The two flags conflict, and `--timeout` requires a numeric value.
+        assert!(Cli::try_parse_from(osv(&[
+            "npm-utils",
+            "--timeout",
+            "5",
+            "--no-timeout",
+            "install"
+        ]))
+        .is_err());
+        assert!(Cli::try_parse_from(osv(&["npm-utils", "--timeout", "soon", "install"])).is_err());
     }
 }
