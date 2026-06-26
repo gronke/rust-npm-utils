@@ -1,7 +1,61 @@
 //! HTTP download helpers.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 use ureq::tls::{RootCerts, TlsConfig};
+
+/// HTTP timeouts for downloads; `None` disables a bound.
+#[derive(Clone, Copy, Debug)]
+pub struct Timeouts {
+    /// Cap on establishing the connection.
+    pub connect: Option<Duration>,
+    /// Cap on the whole request (connect + transfer).
+    pub global: Option<Duration>,
+}
+
+impl Default for Timeouts {
+    /// 30 s to connect, 120 s overall — enough for a large tarball on a slow link, while a stalled
+    /// peer can't hang the build.
+    fn default() -> Self {
+        Self {
+            connect: Some(Duration::from_secs(30)),
+            global: Some(Duration::from_secs(120)),
+        }
+    }
+}
+
+impl Timeouts {
+    /// Build from the CLI flags: `--no-timeout` removes every bound; `--timeout <secs>` sets the
+    /// overall budget (connect stays at the default); neither keeps the default.
+    pub fn from_cli(timeout_secs: Option<u64>, no_timeout: bool) -> Timeouts {
+        if no_timeout {
+            Timeouts {
+                connect: None,
+                global: None,
+            }
+        } else if let Some(secs) = timeout_secs {
+            Timeouts {
+                global: Some(Duration::from_secs(secs)),
+                ..Timeouts::default()
+            }
+        } else {
+            Timeouts::default()
+        }
+    }
+}
+
+static TIMEOUTS: OnceLock<Timeouts> = OnceLock::new();
+
+/// Override the process-wide download timeouts. Intended to be called once at startup (the CLI
+/// derives them from `--timeout` / `--no-timeout`); the library default applies if never set, and a
+/// later call is ignored.
+pub fn set_timeouts(timeouts: Timeouts) {
+    let _ = TIMEOUTS.set(timeouts);
+}
+
+fn timeouts() -> Timeouts {
+    TIMEOUTS.get().copied().unwrap_or_default()
+}
 
 /// Download an `https://` URL into memory (100 MB cap), retrying once on transient failure.
 ///
@@ -22,6 +76,7 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         )
         .into());
     }
+    let t = timeouts();
     let agent = ureq::Agent::new_with_config(
         ureq::Agent::config_builder()
             .tls_config(
@@ -29,8 +84,8 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
                     .root_certs(RootCerts::PlatformVerifier)
                     .build(),
             )
-            .timeout_connect(Some(Duration::from_secs(30)))
-            .timeout_global(Some(Duration::from_secs(120)))
+            .timeout_connect(t.connect)
+            .timeout_global(t.global)
             .build(),
     );
 
@@ -77,5 +132,20 @@ mod tests {
         ] {
             assert!(fetch(url).is_err(), "{url:?} must be refused");
         }
+    }
+
+    #[test]
+    fn timeouts_from_cli_flags() {
+        let d = Timeouts::default();
+        // Neither flag → the library default.
+        let unset = Timeouts::from_cli(None, false);
+        assert_eq!((unset.connect, unset.global), (d.connect, d.global));
+        // --timeout sets the overall budget, keeping the default connect.
+        let t = Timeouts::from_cli(Some(5), false);
+        assert_eq!(t.global, Some(Duration::from_secs(5)));
+        assert_eq!(t.connect, d.connect);
+        // --no-timeout removes every bound and wins over --timeout.
+        let off = Timeouts::from_cli(Some(5), true);
+        assert_eq!((off.connect, off.global), (None, None));
     }
 }
