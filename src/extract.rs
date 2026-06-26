@@ -82,8 +82,15 @@ pub fn tar_gz(
         if !is_dir && !entry_type.is_file() {
             continue;
         }
-        let path = entry.path()?;
-        let path_str = path.to_string_lossy().into_owned();
+        // Take the entry path as UTF-8 or reject it: a lossy conversion would map invalid bytes
+        // to U+FFFD, which could alias a different name in `Select::Files` matching.
+        let path_str = {
+            let entry_path = entry.path()?;
+            match entry_path.to_str() {
+                Some(s) => s.to_owned(),
+                None => return Err(non_utf8_entry(&entry_path)),
+            }
+        };
         let rel = strip(&path_str, strip_prefix);
         // Skip the archive root itself (`.` or empty after the prefix strip): an entry naming
         // the destination directory must never replace it or be written over it.
@@ -92,7 +99,10 @@ pub fn tar_gz(
         }
         if is_dir {
             if matches!(select, Select::All) {
-                create_dir_all(safe_join(dest, rel)?)?;
+                // Create the directory through the same symlink-resolved containment guard the file
+                // writes use, so a pre-existing symlink can't redirect dir creation out of `dest`.
+                let target = contained_target(&root, &safe_join(dest, rel)?)?;
+                create_dir_all(target)?;
             }
             continue;
         }
@@ -130,7 +140,10 @@ pub fn zip(
             continue;
         }
         let name = match file.enclosed_name() {
-            Some(n) => n.to_string_lossy().into_owned(),
+            Some(n) => match n.to_str() {
+                Some(s) => s.to_owned(),
+                None => return Err(non_utf8_entry(&n)),
+            },
             None => return Err("unsafe zip entry name (escapes destination)".into()),
         };
         let rel = strip(&name, strip_prefix);
@@ -183,6 +196,11 @@ fn too_many_entries() -> Box<dyn std::error::Error> {
     format!("archive has more than {MAX_ENTRIES} entries (possible archive bomb)").into()
 }
 
+/// Reject an archive entry whose path is not valid UTF-8, rather than lossily mangling it.
+fn non_utf8_entry(path: &Path) -> Box<dyn std::error::Error> {
+    format!("archive entry path is not valid UTF-8: {path:?}").into()
+}
+
 /// Stream `reader` into `writer`, writing at most `budget` bytes and erroring if the source
 /// has more — i.e. if the archive's running total would exceed [`MAX_TOTAL_BYTES`]. Streaming
 /// (rather than buffering the whole entry) means a single huge entry can't OOM the process,
@@ -225,6 +243,69 @@ mod tests {
         }
         builder.finish().unwrap();
         builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    /// Build an in-memory `.tar.gz` carrying a single directory entry at `path`.
+    fn make_tar_gz_dir(path: &str) -> Vec<u8> {
+        let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::fast()));
+        let mut header = tar::Header::new_gnu();
+        header.set_size(0);
+        header.set_mode(0o755);
+        header.set_entry_type(tar::EntryType::Directory);
+        builder
+            .append_data(&mut header, path, IoCursor::new(&b""[..]))
+            .unwrap();
+        builder.finish().unwrap();
+        builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn rejects_creating_a_dir_through_a_preexisting_symlink() {
+        use std::os::unix::fs::symlink;
+        // A pre-existing symlink dir inside `dest`; a directory entry would otherwise create a
+        // subdir through it. The containment guard must refuse, and nothing may land outside `dest`.
+        let tmp = tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, dest.join("link")).unwrap();
+
+        let tgz = make_tar_gz_dir("package/link/sub");
+        let result = tar_gz(&tgz, &dest, Some("package/"), Select::All);
+        assert!(
+            result.is_err(),
+            "must refuse to create a dir through a symlink"
+        );
+        assert!(
+            !outside.join("sub").exists(),
+            "nothing created outside dest"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn rejects_non_utf8_entry_names() {
+        use std::os::unix::ffi::OsStrExt;
+        // An entry whose path is not valid UTF-8 is rejected, not lossily mangled to U+FFFD.
+        let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::fast()));
+        let mut header = tar::Header::new_gnu();
+        header.set_size(3);
+        header.set_mode(0o644);
+        header.set_entry_type(tar::EntryType::Regular);
+        let bad = std::ffi::OsStr::from_bytes(b"bad\xff.txt");
+        builder
+            .append_data(&mut header, bad, IoCursor::new(&b"abc"[..]))
+            .unwrap();
+        builder.finish().unwrap();
+        let tgz = builder.into_inner().unwrap().finish().unwrap();
+
+        let tmp = tempdir().unwrap();
+        assert!(
+            tar_gz(&tgz, tmp.path(), None, Select::All).is_err(),
+            "a non-UTF-8 entry path must be rejected"
+        );
     }
 
     #[test]
