@@ -66,4 +66,37 @@ mod tests {
         let integrity = format!("  sha1-deadbeef   sha512-{b64}  ");
         verify("p", bytes, &integrity).expect("sha512 is found among the listed algorithms");
     }
+
+    #[test]
+    fn verify_rejects_a_short_digest() {
+        // Valid base64, but it decodes to fewer than 64 bytes: the raw-slice compare rejects it
+        // on length alone, so a truncated SRI can never match a full sha512 digest.
+        let short = base64::engine::general_purpose::STANDARD.encode(b"only nine");
+        let integrity = format!("sha512-{short}");
+        assert!(
+            verify("p", b"a downloaded tarball's bytes", &integrity).is_err(),
+            "a sub-64-byte digest cannot match"
+        );
+    }
+
+    #[test]
+    fn verify_accepts_exactly_the_pinned_bytes_and_nothing_else() {
+        // For several payloads the canonical SRI verifies, and flipping any single byte of the
+        // data fails: the check accepts exactly the pinned bytes, never a near-miss.
+        for payload in [b"".as_slice(), b"x", b"a slightly longer tarball payload"] {
+            let good = format!(
+                "sha512-{}",
+                base64::engine::general_purpose::STANDARD.encode(Sha512::digest(payload))
+            );
+            verify("p", payload, &good).expect("the exact payload verifies");
+            for i in 0..payload.len() {
+                let mut tampered = payload.to_vec();
+                tampered[i] ^= 0xff;
+                assert!(
+                    verify("p", &tampered, &good).is_err(),
+                    "flipping byte {i} must fail"
+                );
+            }
+        }
+    }
 }
