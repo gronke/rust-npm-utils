@@ -11,12 +11,17 @@ use sha2::{Digest, Sha512};
 /// Verify `bytes` against a Subresource-Integrity string (`sha512-<base64>`, possibly several
 /// space-separated algorithms — we require and check the sha512 one). `name` is for messages.
 pub fn verify(name: &str, bytes: &[u8], integrity: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let expected = integrity
+    let expected_b64 = integrity
         .split_whitespace()
         .find_map(|token| token.strip_prefix("sha512-"))
         .ok_or_else(|| format!("package `{name}`: no sha512 integrity to verify against"))?;
-    let actual = base64::engine::general_purpose::STANDARD.encode(Sha512::digest(bytes));
-    if actual != expected {
+    // Compare the raw 64 digest bytes, not the base64 text.
+    // Decoding the expected SRI makes the check independent of base64 padding or any
+    // non-canonical encoding in the integrity string.
+    let expected = base64::engine::general_purpose::STANDARD
+        .decode(expected_b64)
+        .map_err(|e| format!("package `{name}`: malformed sha512 integrity: {e}"))?;
+    if expected.as_slice() != Sha512::digest(bytes).as_slice() {
         return Err(format!(
             "package `{name}`: integrity mismatch — the downloaded tarball does not match \
              the expected sha512"
@@ -45,5 +50,20 @@ mod tests {
 
         // An integrity string with no sha512 component is rejected (npm-ci-strict).
         assert!(verify("p", bytes, "sha1-deadbeef").is_err());
+    }
+
+    #[test]
+    fn verify_rejects_malformed_base64() {
+        // A sha512- token whose payload isn't valid base64 is a hard error, not a silent mismatch.
+        assert!(verify("p", b"x", "sha512-@@@@").is_err());
+    }
+
+    #[test]
+    fn verify_finds_sha512_among_algorithms_and_tolerates_whitespace() {
+        // An SRI string may list several space-separated algorithms; we find and check the sha512 one.
+        let bytes = b"multi-algorithm payload";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(Sha512::digest(bytes));
+        let integrity = format!("  sha1-deadbeef   sha512-{b64}  ");
+        verify("p", bytes, &integrity).expect("sha512 is found among the listed algorithms");
     }
 }
