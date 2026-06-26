@@ -6,15 +6,40 @@ use crate::package_json::spec::Range;
 use semver::Version;
 use serde_json::Value;
 
-/// An npm-compatible registry. Defaults to the public registry.
+/// How much of a packument to request from the registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PackumentDetail {
+    /// The abbreviated install document (`application/vnd.npm.install-v1+json`) — much smaller and
+    /// faster, but it omits each version's `license`.
+    #[default]
+    Abbreviated,
+    /// The full document, including `license`.
+    Full,
+}
+
+impl PackumentDetail {
+    /// The `Accept` header for this detail level (`None` = the registry's default JSON).
+    fn accept(self) -> Option<&'static str> {
+        match self {
+            PackumentDetail::Abbreviated => Some("application/vnd.npm.install-v1+json"),
+            PackumentDetail::Full => None,
+        }
+    }
+}
+
+/// An npm-compatible registry. Defaults to the public registry and the abbreviated packument.
 pub struct Registry {
     pub base_url: String,
+    /// How much of each packument to fetch. Abbreviated by default (faster); `Full` includes
+    /// per-version `license`.
+    pub detail: PackumentDetail,
 }
 
 impl Default for Registry {
     fn default() -> Self {
         Self {
             base_url: "https://registry.npmjs.org".to_string(),
+            detail: PackumentDetail::Abbreviated,
         }
     }
 }
@@ -51,7 +76,14 @@ impl Registry {
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
+            ..Self::default()
         }
+    }
+
+    /// Set how much of each packument to fetch (e.g. [`PackumentDetail::Full`] to capture license).
+    pub fn with_detail(mut self, detail: PackumentDetail) -> Self {
+        self.detail = detail;
+        self
     }
 
     /// Conventional tarball URL for an exact `version`. Handles scoped names:
@@ -69,7 +101,7 @@ impl Registry {
             None => name.to_string(),
         };
         let url = format!("{}/{}", self.base_url, encoded);
-        let bytes = download::fetch(&url)?;
+        let bytes = download::fetch_with_accept(&url, self.detail.accept())?;
         Ok(serde_json::from_slice(&bytes)?)
     }
 
@@ -214,25 +246,7 @@ fn select_version(doc: &Value, range: &Range) -> Option<SelectedVersion> {
 /// `licenses: [{ "type": … }]` array — collapse all three (joining a multi-entry array with
 /// `" OR "`), returning `None` when none is declared.
 fn license_of(meta: &Value) -> Option<String> {
-    match meta.get("license") {
-        Some(Value::String(s)) => return Some(s.clone()),
-        Some(Value::Object(o)) => {
-            if let Some(t) = o.get("type").and_then(Value::as_str) {
-                return Some(t.to_string());
-            }
-        }
-        _ => {}
-    }
-    let types: Vec<String> = meta
-        .get("licenses")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|l| l.get("type").and_then(Value::as_str).map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    (!types.is_empty()).then(|| types.join(" OR "))
+    crate::package_json::normalize_license(meta)
 }
 
 /// The npm dependency-spec → [`VersionReq`] parser lives in the [`crate::package_json`] module

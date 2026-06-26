@@ -106,6 +106,13 @@ impl Lockfile {
     }
 }
 
+impl crate::package_json::License for LockedPackage {
+    /// The license the lockfile recorded for this package, if any.
+    fn license(&self) -> Option<String> {
+        self.license.clone()
+    }
+}
+
 /// A resolved package to record in a generated lockfile — the write-side input mirroring a parsed
 /// [`LockedPackage`], kept to the flat-tree fields [`render_v3`] emits.
 #[derive(Debug, Clone)]
@@ -233,12 +240,13 @@ pub fn render_v3_from_manifest(
 pub fn write_from_manifest(
     manifest_path: &Path,
     lockfile_path: &Path,
+    registry: &Registry,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let text = std::fs::read_to_string(manifest_path)
         .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
     let doc: Value = serde_json::from_str(&text)
         .map_err(|e| format!("parsing {}: {e}", manifest_path.display()))?;
-    let lockfile = render_v3_from_manifest(&doc, &Registry::npm())?;
+    let lockfile = render_v3_from_manifest(&doc, registry)?;
     std::fs::write(lockfile_path, lockfile)
         .map_err(|e| format!("writing {}: {e}", lockfile_path.display()))?;
     Ok(())
