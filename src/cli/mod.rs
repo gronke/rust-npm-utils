@@ -44,7 +44,7 @@ pub(crate) type Res<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>
     about = "Pure-Rust npm registry tools: install · ci · add · init · upgrade · sbom"
 )]
 struct Cli {
-    /// Overall download timeout in seconds (default 120). Applies to every registry/tarball fetch.
+    /// Timeout in seconds for each download (default 120): the cap on every individual registry/tarball fetch, not a budget for the whole run.
     #[arg(
         long,
         global = true,
@@ -52,7 +52,7 @@ struct Cli {
         conflicts_with = "no_timeout"
     )]
     timeout: Option<u64>,
-    /// Disable the download timeout entirely (no overall or connect bound).
+    /// Disable download timeouts entirely (no per-fetch or connect bound).
     #[arg(long, global = true)]
     no_timeout: bool,
     #[command(subcommand)]

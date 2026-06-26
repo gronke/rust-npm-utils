@@ -9,13 +9,14 @@ use ureq::tls::{RootCerts, TlsConfig};
 pub struct Timeouts {
     /// Cap on establishing the connection.
     pub connect: Option<Duration>,
-    /// Cap on the whole request (connect + transfer).
+    /// Cap on a single request, connect through transfer — applied per fetch, not across the run
+    /// (ureq's per-call `timeout_global`).
     pub global: Option<Duration>,
 }
 
 impl Default for Timeouts {
-    /// 30 s to connect, 120 s overall — enough for a large tarball on a slow link, while a stalled
-    /// peer can't hang the build.
+    /// 30 s to connect, 120 s per request — enough for a large tarball on a slow link, while a
+    /// stalled peer can't hang the build.
     fn default() -> Self {
         Self {
             connect: Some(Duration::from_secs(30)),
@@ -26,7 +27,7 @@ impl Default for Timeouts {
 
 impl Timeouts {
     /// Build from the CLI flags: `--no-timeout` removes every bound; `--timeout <secs>` sets the
-    /// overall budget (connect stays at the default); neither keeps the default.
+    /// per-request timeout (connect stays at the default); neither keeps the default.
     pub fn from_cli(timeout_secs: Option<u64>, no_timeout: bool) -> Timeouts {
         if no_timeout {
             Timeouts {
@@ -62,8 +63,8 @@ fn timeouts() -> Timeouts {
 /// Only `https` is fetched: a non-https URL is refused up front. The tarball URL is advertised
 /// by the registry, so this keeps a hostile or redirecting registry from steering us at a
 /// plain-http or internal endpoint (the downloaded bytes are sha512-verified regardless — this
-/// is defense-in-depth). Connect and overall timeouts are set so a stalled peer can't hang the
-/// build; the 100 MB cap bounds size, the timeouts bound time.
+/// is defense-in-depth). Per-request connect and transfer timeouts are set so a stalled peer
+/// can't hang the build; the 100 MB cap bounds size, the timeouts bound time.
 ///
 /// Some hosts (GitHub in particular) occasionally drop a connection
 /// mid-transfer — observed as `io: Peer disconnected` on CI — and the same URL
@@ -140,7 +141,7 @@ mod tests {
         // Neither flag → the library default.
         let unset = Timeouts::from_cli(None, false);
         assert_eq!((unset.connect, unset.global), (d.connect, d.global));
-        // --timeout sets the overall budget, keeping the default connect.
+        // --timeout sets the per-request timeout, keeping the default connect.
         let t = Timeouts::from_cli(Some(5), false);
         assert_eq!(t.global, Some(Duration::from_secs(5)));
         assert_eq!(t.connect, d.connect);
