@@ -8,17 +8,17 @@ use serde_json::Value;
 use super::Res;
 use crate::install::from_lockfile;
 use crate::package_json::{lock, manifest};
-use crate::registry::{Registry, Resolved};
+use crate::registry::{PackumentDetail, Registry, Resolved};
 
 /// Make `package-lock.json` + `node_modules/` a function of the manifest: write a fresh v3
 /// lockfile from the resolved registry dependency tree (via [`lock::render_v3_from_manifest`],
 /// licenses and all), then install from it (every tarball's sha512 verified). Non-registry
 /// deps (git/`file:`) are recorded in the manifest but not resolved.
-pub(super) fn sync(dir: &Path, doc: &Value) -> Res {
+pub(super) fn sync(dir: &Path, doc: &Value, detail: PackumentDetail) -> Res {
     let lockfile = dir.join("package-lock.json");
     std::fs::write(
         &lockfile,
-        lock::render_v3_from_manifest(doc, &Registry::npm())?,
+        lock::render_v3_from_manifest(doc, &Registry::npm().with_detail(detail))?,
     )?;
     report_installed(&from_lockfile(&lockfile, dir)?);
     Ok(())

@@ -22,7 +22,9 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
+
+use crate::registry::PackumentDetail;
 
 mod add;
 mod ci;
@@ -59,6 +61,31 @@ struct Cli {
     command: Command,
 }
 
+/// The shared `--skip-license` / `--no-skip-license` knob for the lockfile-writing verbs
+/// (`install`, `add`, `upgrade`). The default records license (the full packument); `--skip-license`
+/// uses the faster abbreviated packument and omits per-package license from the lockfile.
+#[derive(Args)]
+struct LicenseOpts {
+    /// Record each package's license in package-lock.json (fetches the full packument). The default.
+    #[arg(long, conflicts_with = "skip_license")]
+    no_skip_license: bool,
+    /// Skip per-package license in package-lock.json for faster resolution (abbreviated packument).
+    #[arg(long)]
+    skip_license: bool,
+}
+
+impl LicenseOpts {
+    /// Which packument detail the lockfile writer should use. `--skip-license` uses the abbreviated
+    /// packument; the default and explicit `--no-skip-license` record license via the full one.
+    fn detail(&self) -> PackumentDetail {
+        if self.skip_license && !self.no_skip_license {
+            PackumentDetail::Abbreviated
+        } else {
+            PackumentDetail::Full
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Resolve `dependencies`, write `package-lock.json`, and install `node_modules/`
@@ -79,6 +106,8 @@ enum Command {
         /// (= yarn `--no-lockfile`, npm `--no-package-lock`).
         #[arg(long, visible_alias = "no-package-lock")]
         no_lockfile: bool,
+        #[command(flatten)]
+        license: LicenseOpts,
     },
     /// Install the exact tree pinned by package-lock.json into `node_modules/` (= `npm ci`).
     Ci {
@@ -94,6 +123,8 @@ enum Command {
         /// Project directory.
         #[arg(long, default_value = ".")]
         dir: PathBuf,
+        #[command(flatten)]
+        license: LicenseOpts,
     },
     /// Create a package.json in the directory (= `npm init -y`).
     Init {
@@ -111,6 +142,8 @@ enum Command {
         /// Project directory.
         #[arg(long, default_value = ".")]
         dir: PathBuf,
+        #[command(flatten)]
+        license: LicenseOpts,
     },
     /// Resolve the newest version matching a range and print it (version, tarball, integrity).
     Resolve {
@@ -160,11 +193,20 @@ pub fn run(argv: impl IntoIterator<Item = OsString>) -> Res {
             dir,
             lockfile_only,
             no_lockfile,
-        } => install::run(&dir, lockfile_only, no_lockfile),
+            license,
+        } => install::run(&dir, lockfile_only, no_lockfile, license.detail()),
         Command::Ci { dir } => ci::run(&dir),
-        Command::Add { packages, dir } => add::run(&packages, &dir),
+        Command::Add {
+            packages,
+            dir,
+            license,
+        } => add::run(&packages, &dir, license.detail()),
         Command::Init { dir, name } => init::run(&dir, name.as_deref()),
-        Command::Upgrade { packages, dir } => upgrade::run(&packages, &dir),
+        Command::Upgrade {
+            packages,
+            dir,
+            license,
+        } => upgrade::run(&packages, &dir, license.detail()),
         Command::Resolve { name, range } => resolve::run(&name, &range),
         Command::Download { name, range, out } => download::run(&name, &range, out.as_deref()),
         Command::Sbom { dir, format, name } => sbom::run(&dir, format, name.as_deref()),
@@ -271,5 +313,38 @@ mod tests {
         ]))
         .is_err());
         assert!(Cli::try_parse_from(osv(&["npm-utils", "--timeout", "soon", "install"])).is_err());
+    }
+
+    #[test]
+    fn cli_accepts_license_flags() {
+        // --skip-license / --no-skip-license are accepted on the lockfile-writing verbs.
+        assert!(Cli::try_parse_from(osv(&["npm-utils", "install", "--skip-license"])).is_ok());
+        assert!(
+            Cli::try_parse_from(osv(&["npm-utils", "add", "lit", "--no-skip-license"])).is_ok()
+        );
+        assert!(Cli::try_parse_from(osv(&["npm-utils", "upgrade", "--skip-license"])).is_ok());
+        // The two conflict.
+        assert!(Cli::try_parse_from(osv(&[
+            "npm-utils",
+            "install",
+            "--skip-license",
+            "--no-skip-license"
+        ]))
+        .is_err());
+    }
+
+    #[test]
+    fn license_opts_map_to_packument_detail() {
+        let detail = |skip: bool, no_skip: bool| {
+            LicenseOpts {
+                skip_license: skip,
+                no_skip_license: no_skip,
+            }
+            .detail()
+        };
+        // The default records license (Full); --skip-license uses the abbreviated packument.
+        assert_eq!(detail(false, false), PackumentDetail::Full);
+        assert_eq!(detail(false, true), PackumentDetail::Full);
+        assert_eq!(detail(true, false), PackumentDetail::Abbreviated);
     }
 }

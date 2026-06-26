@@ -6,11 +6,11 @@ use std::path::Path;
 use super::common::{default_name, read_manifest, split_name_range, sync, write_manifest};
 use super::Res;
 use crate::package_json::{manifest, spec};
-use crate::registry::Registry;
+use crate::registry::{PackumentDetail, Registry};
 
 /// Resolve each package (latest → `^x.y.z` when no range given), record it in `package.json`
 /// (scaffolding one if absent), then `sync` the lock + `node_modules/`.
-pub(super) fn run(packages: &[String], dir: &Path) -> Res {
+pub(super) fn run(packages: &[String], dir: &Path, detail: PackumentDetail) -> Res {
     let mut doc = if dir.join("package.json").exists() {
         read_manifest(dir)?
     } else {
@@ -28,5 +28,5 @@ pub(super) fn run(packages: &[String], dir: &Path) -> Res {
         println!("+ {name}@{range}");
     }
     write_manifest(dir, &doc)?;
-    sync(dir, &doc)
+    sync(dir, &doc, detail)
 }
