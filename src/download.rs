@@ -71,6 +71,15 @@ fn timeouts() -> Timeouts {
 /// has not been seen to fail twice in a row, so one retry after a short pause is
 /// enough.
 pub fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    fetch_with_accept(url, None)
+}
+
+/// Like [`fetch`], but sends an `Accept` header — used to request the npm registry's abbreviated
+/// packument (`application/vnd.npm.install-v1+json`), which is far smaller than the full document.
+pub fn fetch_with_accept(
+    url: &str,
+    accept: Option<&str>,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     if !url.starts_with("https://") {
         return Err(format!(
             "refusing to fetch non-https URL {url:?}: npm-utils downloads over https only"
@@ -92,7 +101,7 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sy
 
     let attempts = 2;
     for attempt in 1..=attempts {
-        match try_fetch(&agent, url) {
+        match try_fetch(&agent, url, accept) {
             Ok(body) => return Ok(body),
             Err(e) if attempt < attempts => {
                 eprintln!(
@@ -110,8 +119,13 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sy
 fn try_fetch(
     agent: &ureq::Agent,
     url: &str,
+    accept: Option<&str>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut response = agent.get(url).call()?;
+    let request = match accept {
+        Some(accept) => agent.get(url).header("Accept", accept),
+        None => agent.get(url),
+    };
+    let mut response = request.call()?;
     let body = response.body_mut();
     Ok(body.with_config().limit(100 * 1024 * 1024).read_to_vec()?)
 }

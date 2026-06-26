@@ -29,6 +29,41 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+/// Normalize a `license` declaration to a single SPDX-ish string. Handles npm's modern `license`
+/// string, the legacy `{ "type": … }` object, and the legacy `licenses: [{ "type": … }]` array
+/// (joined with `" OR "`); `None` when none is declared. Shared by the registry (reading a
+/// packument) and the [`License`] readers (a manifest or a lockfile entry).
+pub(crate) fn normalize_license(value: &Value) -> Option<String> {
+    match value.get("license") {
+        Some(Value::String(s)) => return Some(s.clone()),
+        Some(Value::Object(o)) => {
+            if let Some(t) = o.get("type").and_then(Value::as_str) {
+                return Some(t.to_string());
+            }
+        }
+        _ => {}
+    }
+    let types: Vec<String> = value
+        .get("licenses")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|l| l.get("type").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    (!types.is_empty()).then(|| types.join(" OR "))
+}
+
+/// Programmatic access to a declared license, from either a parsed `package.json`
+/// ([`PackageJson`]) or a parsed lockfile entry ([`lock::LockedPackage`]). Lets a consumer source
+/// a package's license from whichever it has — the lockfile when it records one, the manifest
+/// otherwise.
+pub trait License {
+    /// The declared SPDX-ish license string, if any.
+    fn license(&self) -> Option<String>;
+}
+
 /// A dependency parsed from a `package.json` `dependencies` map.
 #[derive(Debug, Clone)]
 pub struct Dependency {
@@ -157,6 +192,13 @@ pub enum Entry {
 #[derive(Debug, Clone)]
 pub struct PackageJson {
     raw: Value,
+}
+
+impl License for PackageJson {
+    /// The manifest's declared license (`license` string, or the legacy object / `licenses[]` array).
+    fn license(&self) -> Option<String> {
+        normalize_license(&self.raw)
+    }
 }
 
 /// Conditions tried, in order, for a browser ES-module import map.
