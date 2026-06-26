@@ -70,7 +70,7 @@ fn timeouts() -> Timeouts {
 /// mid-transfer — observed as `io: Peer disconnected` on CI — and the same URL
 /// has not been seen to fail twice in a row, so one retry after a short pause is
 /// enough.
-pub fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+pub fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     if !url.starts_with("https://") {
         return Err(format!(
             "refusing to fetch non-https URL {url:?}: npm-utils downloads over https only"
@@ -107,7 +107,10 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     unreachable!()
 }
 
-fn try_fetch(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn try_fetch(
+    agent: &ureq::Agent,
+    url: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let mut response = agent.get(url).call()?;
     let body = response.body_mut();
     Ok(body.with_config().limit(100 * 1024 * 1024).read_to_vec()?)

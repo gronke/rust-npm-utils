@@ -27,12 +27,12 @@ pub use node_modules::node_modules;
 fn run_install(
     dest: &Path,
     marker_input: &str,
-    populate: impl FnOnce(&Path) -> Result<(), Box<dyn std::error::Error>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    populate: impl FnOnce(&Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let node_modules = dest.join("node_modules");
     let lock = dest.join(".node_modules.lock");
     let marker = dest.join(".node_modules.marker");
-    cache::with_lock(&lock)(|| -> Result<(), Box<dyn std::error::Error>> {
+    cache::with_lock(&lock)(|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if cache::dir_has_content(&node_modules) && cache::marker_matches(&marker, marker_input) {
             return Ok(()); // already up to date
         }
@@ -50,7 +50,7 @@ fn fetch_verify_extract(
     tarball_url: &str,
     integrity_sri: Option<&str>,
     dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let bytes = download::fetch(tarball_url)?;
     integrity::verify(name, &bytes, integrity_sri.unwrap_or(""))?;
     // Strip the tarball's first path component whatever it's named: npm's own pack uses

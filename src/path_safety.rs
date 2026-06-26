@@ -16,7 +16,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-fn unsafe_path(relative: &str) -> Box<dyn std::error::Error> {
+fn unsafe_path(relative: &str) -> Box<dyn std::error::Error + Send + Sync> {
     format!("unsafe path {relative:?}: refuses to escape the destination").into()
 }
 
@@ -24,7 +24,7 @@ fn unsafe_path(relative: &str) -> Box<dyn std::error::Error> {
 /// (`ParentDir`) component, an absolute / root / drive-prefixed path, and any segment
 /// containing a backslash. A leading `.` and ordinary segments — including odd-but-legal
 /// names like `...`, `~`, or `file:` — are allowed; none of them traverse.
-pub fn ensure_within(relative: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn ensure_within(relative: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if relative.is_empty() {
         return Err(unsafe_path(relative));
     }
@@ -43,7 +43,10 @@ pub fn ensure_within(relative: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// `base` joined with a `relative` first validated by [`ensure_within`].
-pub fn safe_join(base: &Path, relative: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn safe_join(
+    base: &Path,
+    relative: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
     ensure_within(relative)?;
     Ok(base.join(relative))
 }
@@ -52,10 +55,15 @@ pub fn safe_join(base: &Path, relative: &str) -> Result<PathBuf, Box<dyn std::er
 /// require it to stay within `root` (which must already be canonicalized). Returns the real,
 /// contained path to write to. This is the symlink-traversal guard: neither a link planted by
 /// an archive nor one already on disk in the destination can redirect a write outside it.
-pub fn contained_target(root: &Path, out: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn contained_target(
+    root: &Path,
+    out: &Path,
+) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
     let parent = out
         .parent()
-        .ok_or_else(|| -> Box<dyn std::error::Error> { "path has no parent".into() })?;
+        .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+            "path has no parent".into()
+        })?;
     std::fs::create_dir_all(parent)?;
     let real_parent = parent.canonicalize()?;
     if !real_parent.starts_with(root) {
@@ -66,7 +74,9 @@ pub fn contained_target(root: &Path, out: &Path) -> Result<PathBuf, Box<dyn std:
     }
     let name = out
         .file_name()
-        .ok_or_else(|| -> Box<dyn std::error::Error> { "path has no file name".into() })?;
+        .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+            "path has no file name".into()
+        })?;
     // Write into the *resolved* directory, so the final write can't be re-redirected.
     let target = real_parent.join(name);
     if let Ok(meta) = std::fs::symlink_metadata(&target) {

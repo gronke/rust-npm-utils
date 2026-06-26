@@ -30,13 +30,21 @@
 //! ```no_run
 //! use npm_utils::{download, extract, registry::Registry};
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let reg = Registry::npm();
 //! let lit = reg.resolve("lit", &"^3".parse()?)?;
 //! let tgz = download::fetch(&lit.tarball_url)?;
 //! extract::tar_gz(&tgz, "dist/lit".as_ref(), Some("package/"), extract::Select::All)?;
 //! # Ok(()) }
 //! ```
+
+#![forbid(unsafe_code)]
+
+/// The crate's boxed, thread-safe error type. A single alias so the whole crate shares one error
+/// spelling, errors cross thread boundaries, and a future switch to a structured enum is one edit.
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+/// The crate's result type, defaulting the error to [`Error`].
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub mod cache;
 // The command-line tool (`npm-utils` / `cargo npm-utils`), behind the `cli` feature so a default

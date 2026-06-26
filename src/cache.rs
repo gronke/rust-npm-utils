@@ -91,7 +91,7 @@ pub fn dir_has_content(dir: &Path) -> bool {
 ///
 /// Not cryptographically secure — sufficient for cache invalidation (detecting
 /// that an input changed), not for integrity verification.
-pub fn file_hash(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+pub fn file_hash(path: &Path) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let mut file = fs::File::open(path)?;
     let mut contents = Vec::new();
     file.read_to_end(&mut contents)?;
@@ -112,7 +112,10 @@ pub fn marker_matches(marker_path: &Path, expected_hash: &str) -> bool {
 }
 
 /// Write `hash` to a marker file.
-pub fn write_marker(marker_path: &Path, hash: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn write_marker(
+    marker_path: &Path,
+    hash: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut file = fs::File::create(marker_path)?;
     file.write_all(hash.as_bytes())?;
     Ok(())
@@ -123,7 +126,7 @@ pub fn write_marker(marker_path: &Path, hash: &str) -> Result<(), Box<dyn std::e
 /// Retries on `ENOTEMPTY` — observed under CI overlay/tmpfs filesystems where
 /// the final `rmdir` races with leftover dentries even after all children are
 /// gone. Linux returns 39, macOS/BSD return 66 — match both.
-pub fn clear_directory(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn clear_directory(dir: &Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if dir.exists() {
         let mut delay_ms: u64 = 50;
         let mut attempts = 0;

@@ -62,7 +62,7 @@ impl Registry {
     }
 
     /// Fetch the package metadata document ("packument").
-    pub fn packument(&self, name: &str) -> Result<Value, Box<dyn std::error::Error>> {
+    pub fn packument(&self, name: &str) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         // Scoped names are URL-encoded in the path: `@scope/pkg` → `@scope%2fpkg`.
         let encoded = match name.strip_prefix('@') {
             Some(rest) => format!("@{}", rest.replacen('/', "%2f", 1)),
@@ -78,7 +78,7 @@ impl Registry {
         &self,
         name: &str,
         range: &Range,
-    ) -> Result<Resolved, Box<dyn std::error::Error>> {
+    ) -> Result<Resolved, Box<dyn std::error::Error + Send + Sync>> {
         let doc = self.packument(name)?;
         let (version, tarball, integrity, license) = select_version(&doc, range)
             .ok_or_else(|| format!("no published version of {name} matches {range}"))?;
@@ -105,7 +105,7 @@ impl Registry {
     pub fn resolve_tree(
         &self,
         roots: &[(String, Range)],
-    ) -> Result<Vec<Resolved>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Resolved>, Box<dyn std::error::Error + Send + Sync>> {
         self.resolve_tree_from(roots, |name| self.packument(name))
     }
 
@@ -115,9 +115,9 @@ impl Registry {
         &self,
         roots: &[(String, Range)],
         mut get_packument: F,
-    ) -> Result<Vec<Resolved>, Box<dyn std::error::Error>>
+    ) -> Result<Vec<Resolved>, Box<dyn std::error::Error + Send + Sync>>
     where
-        F: FnMut(&str) -> Result<Value, Box<dyn std::error::Error>>,
+        F: FnMut(&str) -> Result<Value, Box<dyn std::error::Error + Send + Sync>>,
     {
         use std::collections::{HashMap, VecDeque};
         let mut packuments: HashMap<String, Value> = HashMap::new();

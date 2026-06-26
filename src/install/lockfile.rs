@@ -23,7 +23,7 @@ use crate::registry::Resolved;
 pub fn from_lockfile(
     package_lock: &Path,
     dest: &Path,
-) -> Result<Vec<Resolved>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Resolved>, Box<dyn std::error::Error + Send + Sync>> {
     let lockfile = Lockfile::parse(&std::fs::read_to_string(package_lock)?)?;
     // What this host installs: platform-matching, non-link entries that are registry tarballs.
     let installable: Vec<&LockedPackage> = lockfile
@@ -104,7 +104,7 @@ pub fn from_lockfile(
 fn link_bins(
     node_modules: &Path,
     plan: &[&LockedPackage],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use std::collections::BTreeSet;
     use std::os::unix::fs::{symlink, PermissionsExt};
 
@@ -154,7 +154,7 @@ fn link_bins(
 fn link_bins(
     _node_modules: &Path,
     _plan: &[&LockedPackage],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(()) // `.bin` shims are Unix symlinks; skipped on other platforms
 }
 

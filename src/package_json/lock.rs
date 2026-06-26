@@ -60,7 +60,7 @@ pub struct LockedPackage {
 
 impl Lockfile {
     /// Parse a `package-lock.json` document (lockfileVersion 2 or 3).
-    pub fn parse(s: &str) -> Result<Lockfile, Box<dyn std::error::Error>> {
+    pub fn parse(s: &str) -> Result<Lockfile, Box<dyn std::error::Error + Send + Sync>> {
         let json: Value = serde_json::from_str(s)?;
         let version = json
             .get("lockfileVersion")
@@ -193,13 +193,13 @@ pub fn render_v3(
 pub fn render_v3_from_manifest(
     doc: &Value,
     registry: &Registry,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let direct = manifest::dependencies(doc);
     let roots: Vec<(String, spec::Range)> = direct
         .iter()
         .filter(|(_, range)| spec::Spec::parse(range).is_registry())
         .map(
-            |(name, range)| -> Result<(String, spec::Range), Box<dyn std::error::Error>> {
+            |(name, range)| -> Result<(String, spec::Range), Box<dyn std::error::Error + Send + Sync>> {
                 Ok((name.clone(), spec::Range::parse(range)?))
             },
         )
@@ -233,7 +233,7 @@ pub fn render_v3_from_manifest(
 pub fn write_from_manifest(
     manifest_path: &Path,
     lockfile_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let text = std::fs::read_to_string(manifest_path)
         .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
     let doc: Value = serde_json::from_str(&text)

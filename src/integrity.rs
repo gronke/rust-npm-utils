@@ -10,7 +10,11 @@ use sha2::{Digest, Sha512};
 
 /// Verify `bytes` against a Subresource-Integrity string (`sha512-<base64>`, possibly several
 /// space-separated algorithms — we require and check the sha512 one). `name` is for messages.
-pub fn verify(name: &str, bytes: &[u8], integrity: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn verify(
+    name: &str,
+    bytes: &[u8],
+    integrity: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let expected_b64 = integrity
         .split_whitespace()
         .find_map(|token| token.strip_prefix("sha512-"))
