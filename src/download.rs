@@ -1,7 +1,7 @@
 //! HTTP download helpers.
 
 use std::time::Duration;
-use ureq::tls::TlsConfig;
+use ureq::tls::{RootCerts, TlsConfig};
 
 /// Download an `https://` URL into memory (100 MB cap), retrying once on transient failure.
 ///
@@ -24,7 +24,11 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     }
     let agent = ureq::Agent::new_with_config(
         ureq::Agent::config_builder()
-            .tls_config(TlsConfig::builder().build())
+            .tls_config(
+                TlsConfig::builder()
+                    .root_certs(RootCerts::PlatformVerifier)
+                    .build(),
+            )
             .timeout_connect(Some(Duration::from_secs(30)))
             .timeout_global(Some(Duration::from_secs(120)))
             .build(),

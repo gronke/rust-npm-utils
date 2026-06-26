@@ -1,6 +1,6 @@
 [package]
 name = "npm-utils"
-version = "0.5.2"
+version = "0.5.3"
 authors = ["Stefan Grönke <stefan@gronke.net>"]
 homepage = "https://github.com/gronke/rust-npm-utils"
 repository = "https://github.com/gronke/rust-npm-utils"
@@ -19,7 +19,7 @@ include = ["src/**/*.rs", "Cargo.toml", "README.md", "LICENSE"]
 cli = ["dep:clap"]
 
 [dependencies]
-ureq = { version = "3.0", features = ["rustls"], default-features = false }
+ureq = { version = "3.0", features = ["rustls", "platform-verifier"], default-features = false }
 flate2 = "1.1"
 tar = "0.4"
 zip = { version = "7", default-features = false, features = ["deflate", "time"] }
