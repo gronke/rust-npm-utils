@@ -42,7 +42,7 @@ pub struct Dependency {
 /// Parse the `dependencies` section of a `package.json`.
 pub fn parse_dependencies(
     package_json_path: &Path,
-) -> Result<HashMap<String, Dependency>, Box<dyn std::error::Error>> {
+) -> Result<HashMap<String, Dependency>, Box<dyn std::error::Error + Send + Sync>> {
     let content = fs::read_to_string(package_json_path)?;
     let json: Value = serde_json::from_str(&content)?;
 
@@ -78,7 +78,7 @@ pub fn parse_dependencies(
 /// new packages to lowercase, but the registry still hosts legacy mixed-case names, and a truly
 /// invalid name simply 404s — enforcing case here would only reject valid installs. Anything
 /// outside the allowlist is a typo or a crafted entry meant to traverse a path later — fail loudly.
-fn validate_package_name(name: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn validate_package_name(name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if name.is_empty() || name.len() > 200 {
         return Err(format!("package name {name:?} has invalid length").into());
     }
@@ -97,7 +97,7 @@ fn validate_package_name(name: &str) -> Result<(), Box<dyn std::error::Error>> {
 /// Reject versions outside the semver-adjacent alphabet, before the value ends
 /// up in a URL, a cache filename, or a marker — none of which should contain a
 /// path separator.
-fn validate_version(version: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn validate_version(version: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if version.is_empty() || version.len() > 100 {
         return Err(format!("version {version:?} has invalid length").into());
     }
@@ -164,12 +164,12 @@ const BROWSER_CONDITIONS: &[&str] = &["browser", "module", "import", "default"];
 
 impl PackageJson {
     /// Read and parse a `package.json` from disk.
-    pub fn from_path(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_path(path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Self::from_json(&fs::read_to_string(path)?)
     }
 
     /// Parse a `package.json` from a JSON string (e.g. read out of a tarball).
-    pub fn from_json(s: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_json(s: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Self::from_value(serde_json::from_str(s)?))
     }
 

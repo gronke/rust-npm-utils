@@ -106,7 +106,7 @@ impl Range {
     /// Parse an npm range. `||` separates alternatives; within one, npm's space-separated
     /// comparators are joined with commas for `semver`. A bare full version is an exact pin;
     /// `*`/`x`/empty/`latest` match anything.
-    pub fn parse(spec: &str) -> Result<Range, Box<dyn std::error::Error>> {
+    pub fn parse(spec: &str) -> Result<Range, Box<dyn std::error::Error + Send + Sync>> {
         let spec = spec.trim();
         if spec.is_empty() || spec == "*" || spec == "x" || spec == "latest" {
             return Ok(Range::any());
@@ -133,7 +133,7 @@ impl From<VersionReq> for Range {
 }
 
 impl std::str::FromStr for Range {
-    type Err = Box<dyn std::error::Error>;
+    type Err = Box<dyn std::error::Error + Send + Sync>;
     fn from_str(s: &str) -> Result<Range, Self::Err> {
         Range::parse(s)
     }
@@ -154,7 +154,7 @@ impl std::fmt::Display for Range {
 /// Parse one `||`-free alternative: a bare full version → an exact pin; otherwise npm's
 /// space-separated comparators joined with commas (what `semver` expects). A bare alphabetic word
 /// is reported as an unsupported npm dist-tag rather than leaking a cryptic semver error.
-fn parse_alternative(alt: &str) -> Result<VersionReq, Box<dyn std::error::Error>> {
+fn parse_alternative(alt: &str) -> Result<VersionReq, Box<dyn std::error::Error + Send + Sync>> {
     if alt.is_empty() || alt == "*" || alt == "x" {
         return Ok(VersionReq::STAR);
     }

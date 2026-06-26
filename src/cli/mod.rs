@@ -34,8 +34,8 @@ mod resolve;
 mod sbom;
 mod upgrade;
 
-/// This module's ubiquitous fallible return — `()` by default.
-pub(crate) type Res<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+/// This module's ubiquitous fallible return — `()` by default, over the crate [`crate::Error`].
+pub(crate) type Res<T = ()> = crate::Result<T>;
 
 #[derive(Parser)]
 #[command(

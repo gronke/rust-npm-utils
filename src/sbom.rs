@@ -17,7 +17,7 @@
 //!
 //! ```no_run
 //! use npm_utils::{package_json::lock::Lockfile, sbom};
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let lock = Lockfile::parse(&std::fs::read_to_string("package-lock.json")?)?;
 //! let bom = sbom::components(&lock);
 //! print!("{}", sbom::render_summary(&bom));

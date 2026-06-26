@@ -18,7 +18,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let web = Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
     vendor(&web)?;
 
@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// deps, so the manifest lists lit's family (`lit-html`, `lit-element`,
 /// `@lit/reactive-element`) explicitly, alongside the Web Components and `Temporal`
 /// polyfills.
-fn vendor(web: &Path) -> Result<(), Box<dyn Error>> {
+fn vendor(web: &Path) -> Result<(), Box<dyn Error + Send + Sync>> {
     let reg = Registry::npm();
 
     // Keep production browser modules; drop TypeScript sources and the node-only

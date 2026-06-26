@@ -60,7 +60,7 @@ pub fn tar_gz(
     dest: &Path,
     strip_prefix: Option<&str>,
     select: Select<'_>,
-) -> Result<usize, Box<dyn std::error::Error>> {
+) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     let mut archive = Archive::new(GzDecoder::new(Cursor::new(bytes)));
     let mut count = 0;
     let mut total: u64 = 0;
@@ -124,7 +124,7 @@ pub fn zip(
     dest: &Path,
     strip_prefix: Option<&str>,
     select: Select<'_>,
-) -> Result<usize, Box<dyn std::error::Error>> {
+) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
     if archive.len() as u64 > MAX_ENTRIES {
         return Err(too_many_entries());
@@ -192,12 +192,12 @@ const MAX_TOTAL_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
 /// any real single package, which has at most a few thousand files.
 const MAX_ENTRIES: u64 = 200_000;
 
-fn too_many_entries() -> Box<dyn std::error::Error> {
+fn too_many_entries() -> Box<dyn std::error::Error + Send + Sync> {
     format!("archive has more than {MAX_ENTRIES} entries (possible archive bomb)").into()
 }
 
 /// Reject an archive entry whose path is not valid UTF-8, rather than lossily mangling it.
-fn non_utf8_entry(path: &Path) -> Box<dyn std::error::Error> {
+fn non_utf8_entry(path: &Path) -> Box<dyn std::error::Error + Send + Sync> {
     format!("archive entry path is not valid UTF-8: {path:?}").into()
 }
 
@@ -209,7 +209,7 @@ fn copy_capped<R: Read, W: Write>(
     reader: &mut R,
     writer: &mut W,
     budget: u64,
-) -> Result<u64, Box<dyn std::error::Error>> {
+) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
     // Read one byte past the budget, so an over-budget entry is detected rather than silently
     // truncated to the limit.
     let written = std::io::copy(&mut reader.take(budget.saturating_add(1)), writer)?;
