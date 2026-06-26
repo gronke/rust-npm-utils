@@ -81,6 +81,9 @@ pub fn version_req(spec: &str) -> Result<VersionReq, semver::Error> {
     if Version::parse(spec).is_ok() {
         return VersionReq::parse(&format!("={spec}"));
     }
+    if let Some(xrange) = bare_partial_xrange(spec) {
+        return VersionReq::parse(&xrange);
+    }
     VersionReq::parse(spec)
 }
 
@@ -161,6 +164,12 @@ fn parse_alternative(alt: &str) -> Result<VersionReq, Box<dyn std::error::Error 
     if Version::parse(alt).is_ok() {
         return Ok(VersionReq::parse(&format!("={alt}"))?);
     }
+    // A bare partial numeric version is an npm x-range: `1` = `1.x`, `1.2` = `1.2.x`. The semver
+    // crate would read `1.2` as a caret (`^1.2`, `< 2.0.0`); normalize to the wildcard form so it
+    // means `>=1.2.0, <1.3.0` as npm intends.
+    if let Some(xrange) = bare_partial_xrange(alt) {
+        return Ok(VersionReq::parse(&xrange)?);
+    }
     // A bare alphabetic word (`next`, `beta`, …) is an npm dist-tag, not a semver range. We don't
     // resolve dist-tags (that needs a `dist-tags` lookup), so say so clearly. (`latest` is mapped
     // to `*` earlier, in `Range::parse`.)
@@ -182,6 +191,15 @@ fn parse_alternative(alt: &str) -> Result<VersionReq, Box<dyn std::error::Error 
 fn looks_like_dist_tag(s: &str) -> bool {
     matches!(s.chars().next(), Some(c) if c.is_ascii_alphabetic())
         && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// A bare partial numeric version (`1`, `1.2`) rendered as npm's x-range wildcard (`1.*`, `1.2.*`).
+/// npm reads such a partial as `major.minor.x`, but the `semver` crate reads it as a caret, so this
+/// normalizes it. Returns `None` for anything that isn't one or two all-numeric components.
+fn bare_partial_xrange(spec: &str) -> Option<String> {
+    let parts: Vec<&str> = spec.split('.').collect();
+    let numeric = |p: &&str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+    ((1..=2).contains(&parts.len()) && parts.iter().all(numeric)).then(|| format!("{spec}.*"))
 }
 
 /// Build a [`Spec::Git`], splitting off a `#committish` if present.
@@ -359,5 +377,80 @@ mod tests {
             assert!(matches!(Spec::parse(p), Spec::Path(_)), "{p}");
             assert!(!Spec::parse(p).is_registry(), "{p}");
         }
+    }
+
+    // ---- node-semver conformance ----
+    // Lock in that Range::parse + matches behave like node-semver for the forms npm-utils
+    // resolves, so a future change to the parsing layer can't silently drift.
+
+    fn m(range: &str, ver: &str) -> bool {
+        Range::parse(range)
+            .unwrap_or_else(|e| panic!("range {range:?} failed to parse: {e}"))
+            .matches(&Version::parse(ver).unwrap())
+    }
+
+    #[test]
+    fn conformance_caret() {
+        assert!(m("^1.2.3", "1.2.3"));
+        assert!(m("^1.2.3", "1.9.0"));
+        assert!(!m("^1.2.3", "2.0.0"));
+        assert!(!m("^1.2.3", "1.2.2"));
+        // Caret on 0.x pins the minor.
+        assert!(m("^0.2.3", "0.2.9"));
+        assert!(!m("^0.2.3", "0.3.0"));
+        // Caret on 0.0.x pins the patch.
+        assert!(m("^0.0.3", "0.0.3"));
+        assert!(!m("^0.0.3", "0.0.4"));
+    }
+
+    #[test]
+    fn conformance_tilde() {
+        assert!(m("~1.2.3", "1.2.9"));
+        assert!(!m("~1.2.3", "1.3.0"));
+        assert!(m("~1.2", "1.2.0"));
+        assert!(!m("~1.2", "1.3.0"));
+        assert!(m("~1", "1.9.9"));
+        assert!(!m("~1", "2.0.0"));
+    }
+
+    #[test]
+    fn conformance_x_ranges() {
+        // npm treats x / X / * as wildcards; a bare partial version is equivalent.
+        for r in ["1.x", "1.X", "1.*", "1"] {
+            assert!(m(r, "1.0.0"), "{r}");
+            assert!(m(r, "1.9.9"), "{r}");
+            assert!(!m(r, "2.0.0"), "{r}");
+        }
+        for r in ["1.2.x", "1.2.X", "1.2.*", "1.2"] {
+            assert!(m(r, "1.2.9"), "{r}");
+            assert!(!m(r, "1.3.0"), "{r}");
+        }
+    }
+
+    #[test]
+    fn conformance_exact_and_wildcard() {
+        assert!(m("1.2.3", "1.2.3"));
+        assert!(!m("1.2.3", "1.2.4"));
+        for star in ["*", "x", "", "latest"] {
+            assert!(m(star, "9.9.9"), "{star:?}");
+        }
+    }
+
+    #[test]
+    fn conformance_prerelease() {
+        // A caret range does not match a pre-release of a different (major, minor, patch) tuple.
+        assert!(!m("^1.2.3", "1.3.0-rc.1"));
+        assert!(!m("^1.2.3", "2.0.0-rc.1"));
+        // A pre-release range matches pre-releases of the same tuple, and the release.
+        assert!(m("^1.2.3-rc.1", "1.2.3-rc.2"));
+        assert!(m("^1.2.3-rc.1", "1.2.3"));
+    }
+
+    #[test]
+    fn hyphen_ranges_are_not_yet_supported() {
+        // node-semver's `a - b` (== `>=a <=b`) isn't parsed by the underlying semver crate. Record
+        // the current limitation so that adding support later updates this test deliberately;
+        // tracked with the resolution-fidelity follow-up.
+        assert!(Range::parse("1.2.3 - 2.3.4").is_err());
     }
 }
