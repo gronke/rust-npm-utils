@@ -6,12 +6,12 @@ use std::path::Path;
 use super::common::{bump_floor, read_manifest, sync, write_manifest};
 use super::Res;
 use crate::package_json::{manifest, spec};
-use crate::registry::Registry;
+use crate::registry::{PackumentDetail, Registry};
 
 /// For each (selected) registry dependency, re-resolve within its range and bump a floating
 /// (`^`/`~`) range's floor to the resolved version; then `sync`. Exact pins and complex ranges are
 /// left untouched (npm honors them too).
-pub(super) fn run(packages: &[String], dir: &Path) -> Res {
+pub(super) fn run(packages: &[String], dir: &Path, detail: PackumentDetail) -> Res {
     let mut doc = read_manifest(dir)?;
     let registry = Registry::npm();
     for (name, range) in manifest::dependencies(&doc) {
@@ -30,5 +30,5 @@ pub(super) fn run(packages: &[String], dir: &Path) -> Res {
         }
     }
     write_manifest(dir, &doc)?;
-    sync(dir, &doc)
+    sync(dir, &doc, detail)
 }
