@@ -10,24 +10,45 @@ env:
 
 jobs:
   checks:
-    name: fmt · clippy · test
+    name: fmt · clippy · test (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The full feature set, including the `cli` bins — and the single leg that runs fmt.
+          - name: all-features
+            features: "--all-features"
+            fmt: "true"
+          # The default library build (no `cli`, so no clap) — keeps the always-on modules
+          # (`audit`, `sbom`, …) honest without the CLI's optional dependency.
+          - name: default
+            features: ""
+            fmt: "false"
     steps:
       - uses: actions/checkout@v7
 
-      # ubuntu-latest ships a stable Rust toolchain with rustfmt + clippy.
-      - name: Formatting
-        run: cargo fmt --all --check
+      # Reusable Rust CI actions from gronke/rust-ci, pinned to a release tag.
+      - uses: gronke/rust-ci/.github/actions/install-toolchain@v0.0.3
+        with:
+          toolchain: stable
+          components: rustfmt clippy
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - uses: gronke/rust-ci/.github/actions/rust-cache@v0.0.3
+        with:
+          prefix: ${{ matrix.name }}
 
-      - name: Tests
-        run: cargo test --workspace --all-features
+      # fmt (once) + clippy (`--workspace --all-targets -D warnings`) + test (`--workspace`) for this
+      # feature universe.
+      - uses: gronke/rust-ci/.github/actions/lint-and-test@v0.0.3
+        with:
+          features: ${{ matrix.features }}
+          fmt: ${{ matrix.fmt }}
 
-      # The package.json / package-lock.json schemas now live in the `package_json` module
-      # (src/package_json/); run its strict spec-conformance suite as a named gate too.
+      # The package.json / package-lock.json schemas live in the `package_json` module; run their
+      # strict spec-conformance suite as a named gate too (a labeled subset of the full test run).
       - name: Spec tests (package_json)
+        if: matrix.name == 'all-features'
         run: "cargo test -p npm-utils package_json::"
 
   msrv:
