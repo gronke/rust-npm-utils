@@ -2,8 +2,8 @@
 name = "npm-utils"
 version = "0.5.3"
 authors = ["Stefan Grönke <stefan@gronke.net>"]
-homepage = "https://github.com/gronke/rust-npm-utils"
-repository = "https://github.com/gronke/rust-npm-utils"
+homepage = "https://github.com/gronke/npm-utils"
+repository = "https://github.com/gronke/npm-utils"
 description = "Pure-Rust utilities for the npm registry: resolve a package version, download npm tarballs and GitHub archives, and extract files."
 categories = ["development-tools", "web-programming"]
 keywords = ["npm", "registry", "tarball", "download"]
