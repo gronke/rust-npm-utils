@@ -14,22 +14,22 @@ use crate::sbom;
 /// Output format for the `sbom` verb.
 #[derive(Clone, Copy, ValueEnum)]
 pub(super) enum Format {
-    /// Human-readable license overview (packages grouped by license).
+    /// Human-readable license overview (packages grouped by license)
     Summary,
-    /// CycloneDX 1.6 JSON document.
+    /// CycloneDX 1.6 JSON document
     Cyclonedx,
-    /// SPDX 2.3 JSON document.
+    /// SPDX 2.3 JSON document
     Spdx,
 }
 
 /// Where the `sbom` verb reads each package's declared license.
 #[derive(Clone, Copy, ValueEnum)]
 pub(super) enum LicenseSource {
-    /// The lockfile when it records a license, else the installed package.json (the default).
+    /// The lockfile when it records a license, else the installed package.json (the default)
     Auto,
-    /// Only the lockfile's recorded license.
+    /// Only the lockfile's recorded license
     Lockfile,
-    /// The installed `node_modules/<name>/package.json`, falling back to the lockfile.
+    /// The installed node_modules/<name>/package.json, falling back to the lockfile
     Package,
 }
 
