@@ -46,7 +46,7 @@ pub(crate) type Res<T = ()> = crate::Result<T>;
     about = "Pure-Rust npm registry tools: install · ci · add · init · upgrade · sbom"
 )]
 struct Cli {
-    /// Timeout in seconds for each download (default 120): the cap on every individual registry/tarball fetch, not a budget for the whole run.
+    /// Per-fetch timeout in seconds (default 120) — caps each registry/tarball request, not the whole run
     #[arg(
         long,
         global = true,
@@ -54,7 +54,7 @@ struct Cli {
         conflicts_with = "no_timeout"
     )]
     timeout: Option<u64>,
-    /// Disable download timeouts entirely (no per-fetch or connect bound).
+    /// Disable download timeouts entirely (no per-fetch or connect bound)
     #[arg(long, global = true)]
     no_timeout: bool,
     #[command(subcommand)]
@@ -67,11 +67,10 @@ struct Cli {
 /// records it in the lockfile via the full packument.
 #[derive(Args)]
 struct LicenseOpts {
-    /// Record each package's license in package-lock.json (fetches the full packument).
+    /// Record each package's license in package-lock.json (fetches the full packument)
     #[arg(long, conflicts_with = "skip_license")]
     no_skip_license: bool,
-    /// Skip per-package license in package-lock.json for faster resolution (abbreviated packument).
-    /// The default.
+    /// Skip per-package license in package-lock.json for faster resolution (abbreviated packument); the default
     #[arg(long)]
     skip_license: bool,
 }
@@ -91,95 +90,91 @@ impl LicenseOpts {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Resolve `dependencies`, write `package-lock.json`, and install `node_modules/`
-    /// (= `npm install`).
+    /// Resolve dependencies, write package-lock.json, install node_modules/ (npm install)
     Install {
-        /// Project directory containing package.json.
+        /// Project directory containing package.json
         #[arg(default_value = ".")]
         dir: PathBuf,
-        /// Write package-lock.json but skip installing node_modules/
-        /// (= npm `--package-lock-only`, pnpm `--lockfile-only`).
+        /// Write package-lock.json but don't install node_modules/ (npm --package-lock-only, pnpm --lockfile-only)
         #[arg(
             long,
             visible_alias = "package-lock-only",
             conflicts_with = "no_lockfile"
         )]
         lockfile_only: bool,
-        /// Install node_modules/ without writing package-lock.json
-        /// (= yarn `--no-lockfile`, npm `--no-package-lock`).
+        /// Install node_modules/ without writing package-lock.json (yarn --no-lockfile, npm --no-package-lock)
         #[arg(long, visible_alias = "no-package-lock")]
         no_lockfile: bool,
         #[command(flatten)]
         license: LicenseOpts,
     },
-    /// Install the exact tree pinned by package-lock.json into `node_modules/` (= `npm ci`).
+    /// Install the exact tree package-lock.json pins (npm ci)
     Ci {
-        /// Project directory containing package-lock.json.
+        /// Project directory containing package-lock.json
         #[arg(default_value = ".")]
         dir: PathBuf,
     },
-    /// Resolve + add package(s) to package.json, write package-lock.json, and install (= `npm add`).
+    /// Add packages to package.json, write the lock, and install (npm add)
     Add {
-        /// Packages as `name` or `name@range` (e.g. `lit`, `lit@^3`, `@lit/context@^1`).
+        /// Packages as name or name@range (e.g. lit, lit@^3, @lit/context@^1)
         #[arg(required = true)]
         packages: Vec<String>,
-        /// Project directory.
+        /// Project directory
         #[arg(long, default_value = ".")]
         dir: PathBuf,
         #[command(flatten)]
         license: LicenseOpts,
     },
-    /// Create a package.json in the directory (= `npm init -y`).
+    /// Create a package.json (npm init -y)
     Init {
-        /// Project directory.
+        /// Project directory
         #[arg(long, default_value = ".")]
         dir: PathBuf,
-        /// Package name (defaults to the directory name).
+        /// Package name (defaults to the directory name)
         #[arg(long)]
         name: Option<String>,
     },
-    /// Re-resolve dependencies within their ranges, refresh the lock, and install (= `npm update`).
+    /// Re-resolve within ranges, refresh the lock, and install (npm update)
     Upgrade {
-        /// Packages to upgrade; empty means all `dependencies`.
+        /// Packages to upgrade; empty means all dependencies
         packages: Vec<String>,
-        /// Project directory.
+        /// Project directory
         #[arg(long, default_value = ".")]
         dir: PathBuf,
         #[command(flatten)]
         license: LicenseOpts,
     },
-    /// Resolve the newest version matching a range and print it (version, tarball, integrity).
+    /// Print the newest version matching a range (version, tarball, integrity)
     Resolve {
-        /// Package name.
+        /// Package name
         name: String,
-        /// Semver range (default: any).
+        /// Semver range (default: any)
         #[arg(default_value = "*")]
         range: String,
     },
-    /// Download a package tarball to a file — resolve + fetch, no install.
+    /// Download a package tarball — resolve and fetch, no install
     Download {
-        /// Package name.
+        /// Package name
         name: String,
-        /// Semver range (default: any).
+        /// Semver range (default: any)
         #[arg(default_value = "*")]
         range: String,
-        /// Write the .tgz here (default: `<name>-<version>.tgz` in the current dir).
+        /// Write the .tgz here (default: <name>-<version>.tgz in the current dir)
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// Render a bill of materials from package-lock.json: a license summary, CycloneDX, or SPDX.
+    /// Bill of materials from package-lock.json: license summary, CycloneDX, or SPDX
     Sbom {
-        /// Project directory containing package-lock.json.
+        /// Project directory containing package-lock.json
         #[arg(default_value = ".")]
         dir: PathBuf,
-        /// Output format.
+        /// Output format
         #[arg(long, default_value = "summary")]
         format: sbom::Format,
-        /// Name for the SBOM's root component / document (default: the directory name).
+        /// Name for the SBOM's root component / document (default: the directory name)
         #[arg(long)]
         name: Option<String>,
-        /// Where to read each package's license: `auto` (lockfile, falling back to the installed
-        /// package.json), `lockfile`, or `package`.
+        /// Where to read each package's license: auto (lockfile, else the installed package.json), lockfile, or package
         #[arg(long, default_value = "auto")]
         license_source: sbom::LicenseSource,
     },
