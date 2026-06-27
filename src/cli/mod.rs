@@ -27,6 +27,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::registry::PackumentDetail;
 
 mod add;
+mod audit;
 mod ci;
 mod common;
 mod download;
@@ -43,7 +44,7 @@ pub(crate) type Res<T = ()> = crate::Result<T>;
 #[command(
     name = "npm-utils",
     version,
-    about = "Pure-Rust npm registry tools: install · ci · add · init · upgrade · sbom"
+    about = "Pure-Rust npm registry tools: install · ci · add · init · upgrade · sbom · audit"
 )]
 struct Cli {
     /// Per-fetch timeout in seconds (default 120) — caps each registry/tarball request, not the whole run
@@ -178,6 +179,24 @@ enum Command {
         #[arg(long, default_value = "auto")]
         license_source: sbom::LicenseSource,
     },
+    /// Check installed packages against vulnerability advisories (npm audit)
+    Audit {
+        /// Project directory containing package-lock.json
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+        /// Minimum severity that makes the command exit non-zero (default: low — any vuln fails)
+        #[arg(long, value_enum, default_value = "low")]
+        audit_level: audit::AuditLevel,
+        /// Output format
+        #[arg(long, value_enum, default_value = "summary")]
+        format: audit::Format,
+        /// Advisory sources to query, comma-separated (default: npm,osv)
+        #[arg(long, value_enum, value_delimiter = ',')]
+        sources: Option<Vec<audit::SourceKind>>,
+        /// Registry base URL for the npm advisory source (default: https://registry.npmjs.org)
+        #[arg(long)]
+        registry: Option<String>,
+    },
 }
 
 /// Parse `argv` and dispatch to the verb's submodule. `argv` is taken explicitly (not
@@ -217,6 +236,19 @@ pub fn run(argv: impl IntoIterator<Item = OsString>) -> Res {
             name,
             license_source,
         } => sbom::run(&dir, format, name.as_deref(), license_source),
+        Command::Audit {
+            dir,
+            audit_level,
+            format,
+            sources,
+            registry,
+        } => audit::run(
+            &dir,
+            audit_level,
+            format,
+            sources.as_deref(),
+            registry.as_deref(),
+        ),
     }
 }
 
@@ -289,9 +321,31 @@ mod tests {
             osv(&["npm-utils", "download", "ms", "--out", "/tmp/ms.tgz"]),
             osv(&["npm-utils", "sbom", "/tmp/x", "--format", "cyclonedx"]),
             osv(&["npm-utils", "sbom", "--format", "spdx", "--name", "demo"]),
+            osv(&["npm-utils", "audit", "/tmp/x"]),
+            osv(&[
+                "npm-utils",
+                "audit",
+                "--audit-level",
+                "high",
+                "--format",
+                "json",
+            ]),
+            osv(&[
+                "npm-utils",
+                "audit",
+                "--sources",
+                "npm,osv",
+                "--registry",
+                "https://r.example",
+            ]),
         ] {
             assert!(Cli::try_parse_from(argv).is_ok());
         }
+        // `audit` rejects an unknown severity level and an unknown source.
+        assert!(
+            Cli::try_parse_from(osv(&["npm-utils", "audit", "--audit-level", "fatal"])).is_err()
+        );
+        assert!(Cli::try_parse_from(osv(&["npm-utils", "audit", "--sources", "snyk"])).is_err());
         // `add` requires at least one package.
         assert!(Cli::try_parse_from(osv(&["npm-utils", "add"])).is_err());
         // `install` can't both write only the lock and skip the lock.

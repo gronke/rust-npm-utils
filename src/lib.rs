@@ -26,6 +26,8 @@
 //!   install paths check it before trusting bytes).
 //! - [`sbom`] — render the packages a `package-lock.json` pins as a license summary, a CycloneDX
 //!   1.6 document, or an SPDX 2.3 document — compliance artifacts, pure Rust, no Node.
+//! - [`audit`] — check those same pinned packages against vulnerability advisories from multiple
+//!   sources (npm's registry endpoint, OSV) behind a small source trait — `npm audit`, pure Rust.
 //!
 //! ```no_run
 //! use npm_utils::{download, extract, registry::Registry};
@@ -46,6 +48,9 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 /// The crate's result type, defaulting the error to [`Error`].
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+// Vulnerability auditing (`npm audit`, pure Rust): check the packages a `package-lock.json` pins
+// against multiple advisory sources (npm's registry endpoint, OSV) behind a small source trait.
+pub mod audit;
 pub mod cache;
 // The command-line tool (`npm-utils` / `cargo npm-utils`), behind the `cli` feature so a default
 // library build pulls no `clap`. Drives the primitives below — `registry`, `install`, and the
