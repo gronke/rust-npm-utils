@@ -1,5 +1,6 @@
 //! HTTP download helpers.
 
+use serde_json::Value;
 use std::sync::OnceLock;
 use std::time::Duration;
 use ureq::tls::{RootCerts, TlsConfig};
@@ -58,6 +59,24 @@ fn timeouts() -> Timeouts {
     TIMEOUTS.get().copied().unwrap_or_default()
 }
 
+/// The shared HTTP agent — platform-verifier TLS plus the process-wide download timeouts. Used by
+/// every request helper here ([`fetch_with_accept`], [`post_json`]) so they share one TLS/timeout
+/// policy and honour `--timeout` / `--no-timeout`.
+fn agent() -> ureq::Agent {
+    let t = timeouts();
+    ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .tls_config(
+                TlsConfig::builder()
+                    .root_certs(RootCerts::PlatformVerifier)
+                    .build(),
+            )
+            .timeout_connect(t.connect)
+            .timeout_global(t.global)
+            .build(),
+    )
+}
+
 /// Download an `https://` URL into memory (100 MB cap), retrying once on transient failure.
 ///
 /// Only `https` is fetched: a non-https URL is refused up front. The tarball URL is advertised
@@ -86,18 +105,7 @@ pub fn fetch_with_accept(
         )
         .into());
     }
-    let t = timeouts();
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .tls_config(
-                TlsConfig::builder()
-                    .root_certs(RootCerts::PlatformVerifier)
-                    .build(),
-            )
-            .timeout_connect(t.connect)
-            .timeout_global(t.global)
-            .build(),
-    );
+    let agent = agent();
 
     let attempts = 2;
     for attempt in 1..=attempts {
@@ -130,6 +138,44 @@ fn try_fetch(
     Ok(body.with_config().limit(100 * 1024 * 1024).read_to_vec()?)
 }
 
+/// POST `body` to an `https://` URL and return the parsed JSON response, or `None` on **any**
+/// failure — a non-https URL, a network error, a non-2xx status, or an unparseable body.
+///
+/// The single-attempt, error-swallowing contract is deliberate: the audit advisory sources read
+/// `None` as "no advisories", so an unreachable endpoint, a 410 (npm's retired legacy paths), or a
+/// flaky link degrades to an empty result instead of failing the run — matching `npm audit` /
+/// `pnpm audit`, which exit 0 when the advisory endpoint can't be reached.
+///
+/// `content_encoding` sets the `Content-Encoding` header (`Some("gzip")` when `body` is
+/// gzip-compressed, as npm's bulk-advisory endpoint requires); `accept` overrides the `Accept`
+/// header (default `application/json`). `Content-Type` is always `application/json`.
+pub fn post_json(
+    url: &str,
+    body: &[u8],
+    content_encoding: Option<&str>,
+    accept: Option<&str>,
+) -> Option<Value> {
+    if !url.starts_with("https://") {
+        return None;
+    }
+    let request = agent()
+        .post(url)
+        .header("Content-Type", "application/json")
+        .header("Accept", accept.unwrap_or("application/json"));
+    let request = match content_encoding {
+        Some(enc) => request.header("Content-Encoding", enc),
+        None => request,
+    };
+    let mut response = request.send(body).ok()?;
+    let bytes = response
+        .body_mut()
+        .with_config()
+        .limit(100 * 1024 * 1024)
+        .read_to_vec()
+        .ok()?;
+    serde_json::from_slice::<Value>(&bytes).ok()
+}
+
 /// URL for a GitHub repository archive (zip) at a ref (branch, tag, or commit).
 pub fn github_archive_url(owner: &str, repo: &str, git_ref: &str) -> String {
     format!("https://github.com/{owner}/{repo}/archive/{git_ref}.zip")
@@ -149,6 +195,21 @@ mod tests {
             "registry.npmjs.org/x",
         ] {
             assert!(fetch(url).is_err(), "{url:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn post_json_refuses_non_https() {
+        // The scheme guard rejects before any network request, so this is offline.
+        for url in [
+            "http://api.example.com/x",
+            "ftp://example.com/x",
+            "api.example.com/x",
+        ] {
+            assert!(
+                post_json(url, b"{}", None, None).is_none(),
+                "{url:?} must be refused"
+            );
         }
     }
 

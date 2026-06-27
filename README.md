@@ -27,6 +27,7 @@ Composable modules — the full API is on **[docs.rs](https://docs.rs/npm-utils)
 | `install` | Build a real `node_modules/`: resolve a `package.json` (`npm install`) or reproduce a `package-lock.json` exactly (`npm ci`), every tarball integrity-checked. |
 | `package_json` | Parse `package.json` / `package-lock.json` and the npm version-spec grammar; write npm-faithful manifests and v3 locks. |
 | `sbom` | Render a committed lock as a license summary, CycloneDX 1.6, or SPDX 2.3. |
+| `audit` | Check a committed lock's packages against vulnerability advisories (npm registry + OSV) behind a pluggable source trait. |
 | `cache` | Content-hash markers and a cross-process lock for skip-if-unchanged downloads. |
 | `path_safety` | The traversal/symlink hardening shared by `extract` and `install`. |
 
@@ -68,6 +69,23 @@ std::fs::write("sbom.cdx.json", sbom::to_cyclonedx(&bom, "my-app", "1.0.0", None
 # Ok(()) }
 ```
 
+Audit those same packages against vulnerability advisories — multiple sources behind one trait:
+
+```rust,no_run
+use npm_utils::{audit, package_json::lock::Lockfile, sbom};
+
+# fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+let lock = Lockfile::parse(&std::fs::read_to_string("package-lock.json")?)?;
+let components = sbom::components(&lock);
+let sources: Vec<Box<dyn audit::AdvisorySource>> = vec![
+    Box::new(audit::npm::NpmRegistrySource::new("https://registry.npmjs.org")),
+    Box::new(audit::osv::OsvSource),
+];
+let report = audit::run_audit(&components, &sources);           // dedup'd across sources,
+print!("{}", audit::render_summary(&report));                   // filtered to installed versions
+# Ok(()) }
+```
+
 ## CLI
 
 The same engine ships as a command-line tool behind the `cli` feature — a pure-Rust subset of npm's verbs, no Node or npm:
@@ -83,7 +101,7 @@ so every verb works standalone *or* as a cargo subcommand (`npm-utils add lit` �
 
 ```console
 $ npm-utils --help
-Pure-Rust npm registry tools: install · ci · add · init · upgrade · sbom
+Pure-Rust npm registry tools: install · ci · add · init · upgrade · sbom · audit
 
 Usage: npm-utils [OPTIONS] <COMMAND>
 
@@ -96,6 +114,7 @@ Commands:
   resolve   Print the newest version matching a range (version, tarball, integrity)
   download  Download a package tarball — resolve and fetch, no install
   sbom      Bill of materials from package-lock.json: license summary, CycloneDX, or SPDX
+  audit     Check installed packages against vulnerability advisories (npm audit)
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -137,6 +156,32 @@ MIT (1)
 
 `npm-utils sbom --format cyclonedx` (or `spdx`) emits the same tree as a standards-based compliance document —
 each component carrying its purl, declared license, and `sha512`.
+
+### Vulnerability checks
+
+`audit` checks a committed lock's packages against vulnerability advisories — like `npm audit`, but
+querying **multiple sources** behind one trait. Two ship by default: npm's native registry endpoint and
+[OSV](https://osv.dev). Findings are deduped across sources (by GHSA/CVE alias) and filtered to the
+versions you actually have installed, so the npm endpoint's over-broad ranges don't cry wolf:
+
+```console
+$ npm-utils audit                             # query npm + OSV, group by package
+found 7 vulnerabilities (1 critical, 3 high, 3 moderate, 0 low) in 1 package(s)
+
+lodash@4.17.11
+  CRITICAL GHSA-jf85-cpcp-j695  Prototype Pollution in lodash
+    range <4.17.12 · CWE-1321, CWE-20 · https://github.com/advisories/GHSA-jf85-cpcp-j695
+  HIGH     GHSA-35jh-r3h4-6jhm  Command Injection in lodash
+    range <4.17.21 · CWE-77, CWE-94 · https://github.com/advisories/GHSA-35jh-r3h4-6jhm
+  ...
+```
+
+It mirrors npm's exit semantics: `--audit-level <low|moderate|high|critical>` sets the bar, and the
+command exits non-zero **only** when a finding at or above it exists (default `low` — any vuln fails).
+A finding is a result, not an error: it prints the report and exits `1`. An unreachable advisory
+endpoint degrades to `found 0 vulnerabilities` and exits `0` (it never fails the run); only a
+missing/unreadable lockfile is a hard error. `--format json` emits an `npm audit --json`-shaped report,
+`--sources npm,osv` selects sources, and `--registry <url>` points the npm source at a private mirror.
 
 ## Examples
 
