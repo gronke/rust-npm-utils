@@ -249,7 +249,7 @@ fn license_of(meta: &Value) -> Option<String> {
     crate::package_json::normalize_license(meta)
 }
 
-/// The npm dependency-spec → [`VersionReq`] parser lives in the [`crate::package_json`] module
+/// The npm dependency-spec → `VersionReq` parser lives in the [`crate::package_json`] module
 /// (the package-spec grammar); re-exported here for back-compat as `registry::version_req`.
 pub use crate::package_json::spec::version_req;
 
