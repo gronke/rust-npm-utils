@@ -13,7 +13,7 @@ jobs:
     name: fmt · clippy · test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ubuntu-latest ships a stable Rust toolchain with rustfmt + clippy.
       - name: Formatting
@@ -29,3 +29,17 @@ jobs:
       # (src/package_json/); run its strict spec-conformance suite as a named gate too.
       - name: Spec tests (package_json)
         run: "cargo test -p npm-utils package_json::"
+
+  msrv:
+    name: build on MSRV (1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The crate advertises rust-version = 1.88; build the published crate on exactly that
+      # toolchain so a dependency quietly raising its MSRV can't drift past us unnoticed.
+      - name: Install Rust 1.88
+        run: rustup toolchain install 1.88 --profile minimal
+
+      - name: Build on MSRV
+        run: cargo +1.88 build -p npm-utils --all-features
