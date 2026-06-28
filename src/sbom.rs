@@ -75,7 +75,7 @@ pub fn components(lock: &Lockfile) -> Vec<Component> {
 }
 
 /// Group component `name@version`s by their declared license. Components with no declared license
-/// fall under [`NOASSERTION`]. Keys (licenses) and values (packages) are both sorted.
+/// fall under `NOASSERTION`. Keys (licenses) and values (packages) are both sorted.
 pub fn license_summary(components: &[Component]) -> BTreeMap<String, Vec<String>> {
     let mut by_license: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for c in components {
@@ -111,7 +111,7 @@ pub fn render_summary(components: &[Component]) -> String {
     s
 }
 
-/// Render a [CycloneDX] 1.6 JSON SBOM. `app_name`/`app_version` describe the root component;
+/// Render a CycloneDX 1.6 JSON SBOM. `app_name`/`app_version` describe the root component;
 /// `timestamp` is an RFC 3339 string for `metadata.timestamp` (or `None` to omit it — useful for
 /// reproducible output and tests).
 pub fn to_cyclonedx(
@@ -176,7 +176,7 @@ pub fn to_cyclonedx(
     s
 }
 
-/// Render an [SPDX] 2.3 JSON SBOM. `name`/`namespace` are the document name and its unique
+/// Render an SPDX 2.3 JSON SBOM. `name`/`namespace` are the document name and its unique
 /// `documentNamespace` URI; `created` is the RFC 3339 creation time (SPDX requires it).
 pub fn to_spdx(components: &[Component], name: &str, namespace: &str, created: &str) -> String {
     let packages: Vec<Value> = components
