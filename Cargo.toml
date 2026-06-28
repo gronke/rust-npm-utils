@@ -9,7 +9,7 @@ categories = ["development-tools", "web-programming"]
 keywords = ["npm", "registry", "tarball", "download"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.88"   # floor set by the `time` dependency (MSRV 1.88); guarded by the CI msrv job
 include = ["src/**/*.rs", "Cargo.toml", "README.md", "LICENSE"]
 
 [features]
@@ -30,15 +30,15 @@ serde_json = { version = "1", features = ["preserve_order"] }
 semver = "1"
 # Verify each downloaded tarball's `sha512-<base64>` integrity — the registry's `dist.integrity`
 # (`install::node_modules`) and the hash pinned in a package-lock.json (`install::from_lockfile`).
-# npm-install / npm-ci-faithful. Small, widely-trusted crates, MSRV ≤ 1.77.2.
+# npm-install / npm-ci-faithful. Small, widely-trusted crates, well within the crate MSRV.
 sha2 = "0.10"
 base64 = "0.22"
 # Format the SBOM generation timestamp as RFC 3339 (`sbom::now_rfc3339`). `time` is already in the
 # tree (via `zip`); this only adds its `formatting` feature — no new dependency.
 time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
 
-# CLI only (feature `cli`). clap 4.5's MSRV (1.70) is below this crate's 1.77.2, so it does not
-# raise the library MSRV; optional, so it is absent from a default library build.
+# CLI only (feature `cli`); optional, so a default library build skips it. clap and its deps build
+# under the crate MSRV (1.88), which is set by `time`, not clap.
 clap = { version = "4.5", features = ["derive"], optional = true }
 
 # The CLI ships as two binaries from this one crate: `npm-utils <verb>` and, via cargo's
