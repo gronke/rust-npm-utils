@@ -3,7 +3,7 @@
 //! Everything here is a `serde_json::Value` → `Value`/`String` transform: nothing touches the
 //! filesystem (the CLI reads and writes the file), so [`crate::package_json`]'s "parses and
 //! renders, never does IO" invariant holds and these stay trivially testable. The CLI's `add` /
-//! `init` verbs compose them.
+//! `init` / `remove` verbs compose them.
 //!
 //! Key order is npm-faithful only because the crate enables `serde_json`'s `preserve_order`
 //! feature: a parsed object keeps the user's field order on re-serialize, and [`dependencies`] is
@@ -34,6 +34,25 @@ pub fn upsert_dependency(doc: &mut Value, name: &str, range: &str) {
         map.insert(name.to_string(), Value::String(range.to_string()));
         sort_keys(map);
     }
+}
+
+/// Remove `dependencies[name]` in place, returning whether it was present. A no-op returning `false`
+/// when `doc` is not an object, has no `dependencies`, or the key is absent — the counterpart to
+/// [`upsert_dependency`]. The remaining dependencies are re-sorted, so the object keeps npm's
+/// on-save alphabetical order regardless of how the underlying map removes a key.
+pub fn remove_dependency(doc: &mut Value, name: &str) -> bool {
+    let Some(map) = doc
+        .as_object_mut()
+        .and_then(|obj| obj.get_mut("dependencies"))
+        .and_then(Value::as_object_mut)
+    else {
+        return false;
+    };
+    let existed = map.remove(name).is_some();
+    if existed {
+        sort_keys(map);
+    }
+    existed
 }
 
 /// The `(name, range)` pairs of the `dependencies` object (string values only), sorted by name.
@@ -129,6 +148,35 @@ mod tests {
         let mut doc: Value = serde_json::from_str(r#"{"name":"app","version":"1.0.0"}"#).unwrap();
         upsert_dependency(&mut doc, "ms", "^2");
         assert_eq!(doc["dependencies"]["ms"], "^2");
+    }
+
+    #[test]
+    fn remove_dependency_drops_the_key_and_keeps_the_rest_sorted() {
+        let mut doc: Value = serde_json::from_str(
+            r#"{"name":"app","version":"1.0.0","dependencies":{"a":"^1","b":"^2","c":"^3"},"scripts":{"build":"x"}}"#,
+        )
+        .unwrap();
+        assert!(remove_dependency(&mut doc, "b"));
+        // `b` is gone; `a` and `c` remain in sorted order.
+        assert_eq!(
+            dependencies(&doc),
+            vec![
+                ("a".to_string(), "^1".to_string()),
+                ("c".to_string(), "^3".to_string()),
+            ]
+        );
+        // The written order is alphabetical, and sibling fields are untouched.
+        let text = to_pretty(&doc);
+        assert!(text.find("\"a\"").unwrap() < text.find("\"c\"").unwrap());
+        assert_eq!(doc["scripts"]["build"], "x");
+    }
+
+    #[test]
+    fn remove_dependency_is_false_when_absent_or_no_deps() {
+        let mut doc = scaffold("app", "1.0.0");
+        assert!(!remove_dependency(&mut doc, "nope"));
+        let mut bare: Value = serde_json::from_str(r#"{"name":"app","version":"1.0.0"}"#).unwrap();
+        assert!(!remove_dependency(&mut bare, "x"));
     }
 
     #[test]

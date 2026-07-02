@@ -1,34 +1,20 @@
 //! `upgrade` — re-resolve dependencies within their ranges, refresh the lock, install
-//! (= `npm update`).
+//! (= `npm update`). Thin wrapper over [`crate::project::upgrade`].
 
 use std::path::Path;
 
-use super::common::{bump_floor, read_manifest, sync, write_manifest};
+use super::common::report_installed;
 use super::Res;
-use crate::package_json::{manifest, spec};
-use crate::registry::{PackumentDetail, Registry};
+use crate::project;
+use crate::registry::PackumentDetail;
 
-/// For each (selected) registry dependency, re-resolve within its range and bump a floating
-/// (`^`/`~`) range's floor to the resolved version; then `sync`. Exact pins and complex ranges are
-/// left untouched (npm honors them too).
+/// Upgrade the selected dependencies (empty = all) and refresh the lock + `node_modules/`, printing
+/// each applied `name: from → to` change and the reinstalled tree.
 pub(super) fn run(packages: &[String], dir: &Path, detail: PackumentDetail) -> Res {
-    let mut doc = read_manifest(dir)?;
-    let registry = Registry::npm();
-    for (name, range) in manifest::dependencies(&doc) {
-        if !packages.is_empty() && !packages.contains(&name) {
-            continue;
-        }
-        if !spec::Spec::parse(&range).is_registry() {
-            continue; // git / file / tarball — nothing to re-resolve from the registry
-        }
-        let resolved = registry.resolve(&name, &spec::Range::parse(&range)?)?;
-        if let Some(bumped) = bump_floor(&range, &resolved.version) {
-            if bumped != range {
-                manifest::upsert_dependency(&mut doc, &name, &bumped);
-                println!("{name}: {range} → {bumped}");
-            }
-        }
+    let (changes, installed) = project::upgrade(dir, packages, detail)?;
+    for change in &changes {
+        println!("{}: {} → {}", change.name, change.from, change.to);
     }
-    write_manifest(dir, &doc)?;
-    sync(dir, &doc, detail)
+    report_installed(&installed);
+    Ok(())
 }

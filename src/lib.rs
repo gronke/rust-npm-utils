@@ -4,7 +4,8 @@
 //! Node or npm:
 //!
 //! - [`registry`] — talk to an npm registry: build tarball URLs, fetch a
-//!   package's metadata, and resolve the newest version matching a semver range.
+//!   package's metadata, resolve the newest version matching a semver range, and
+//!   search the registry ([`registry::search`]).
 //! - [`download`] — fetch bytes over HTTP (with a retry) and build GitHub
 //!   archive URLs.
 //! - [`extract`] — unpack `.tar.gz` and `.zip` archives into a destination
@@ -22,6 +23,9 @@
 //!   ([`install::node_modules`]), or install the exact tree a `package-lock.json` pins —
 //!   devDependencies included, `.bin` shims and all — an `npm ci` in Rust
 //!   ([`install::from_lockfile`]).
+//! - [`project`] — mutate a `package.json` project: keep the lock + `node_modules/` in sync
+//!   ([`project::sync`]), upgrade dependencies within their ranges with a dry-run plan
+//!   ([`project::plan_upgrade`] / [`project::upgrade`]), and remove them ([`project::remove`]).
 //! - [`integrity`] — verify a downloaded tarball's `sha512` Subresource-Integrity (both
 //!   install paths check it before trusting bytes).
 //! - [`sbom`] — render the packages a `package-lock.json` pins as a license summary, a CycloneDX
@@ -53,8 +57,8 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub mod audit;
 pub mod cache;
 // The command-line tool (`npm-utils` / `cargo npm-utils`), behind the `cli` feature so a default
-// library build pulls no `clap`. Drives the primitives below — `registry`, `install`, and the
-// `package_json` manifest/lock writers — for `install`/`ci`/`add`/`init`/`upgrade`.
+// library build pulls no `clap`. Drives the primitives below — `registry`, `install`, `project`, and
+// the `package_json` manifest/lock writers — for `install`/`ci`/`add`/`remove`/`init`/`upgrade`.
 #[cfg(feature = "cli")]
 pub mod cli;
 pub mod download;
@@ -65,6 +69,9 @@ pub mod integrity;
 // modeled on the npm specs, with strict spec-conformance tests living beside it.
 pub mod package_json;
 pub mod path_safety;
+// Project mutations (`sync` / `upgrade` / `remove`) that keep package.json + lock + node_modules in
+// step — the IO orchestration over the pure `package_json` transforms and `registry`/`install`.
+pub mod project;
 pub mod registry;
 // License/SBOM output (license summary · CycloneDX · SPDX) for a parsed `package-lock.json`.
 pub mod sbom;

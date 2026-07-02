@@ -1,6 +1,6 @@
 [package]
 name = "npm-utils"
-version = "0.5.3"
+version = "0.6.0"
 authors = ["Stefan Grönke <stefan@gronke.net>"]
 homepage = "https://github.com/gronke/npm-utils"
 repository = "https://github.com/gronke/npm-utils"

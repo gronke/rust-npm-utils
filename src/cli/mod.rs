@@ -9,13 +9,15 @@
 //!   `node_modules/` (= `npm install`); `--lockfile-only` / `--no-lockfile` toggle each half.
 //! - `ci` — install the exact tree a `package-lock.json` pins (= `npm ci`).
 //! - `add` — resolve package(s), record them in `package.json`, write `package-lock.json`, install.
+//! - `remove` — drop package(s) from `package.json`, refresh the lock, reinstall (= `npm remove`).
 //! - `init` — scaffold a `package.json` (= `npm init -y`).
 //! - `upgrade` — re-resolve within ranges, refresh the lock, install (= `npm update`).
 //! - `resolve` / `download` — thin registry probes (print a resolution / fetch a tarball).
+//! - `search` — query the registry and print matching packages (= `npm search`).
 //!
-//! The library does the heavy lifting ([`crate::registry`], [`crate::install`], and the
-//! [`crate::package_json`] manifest/lock writers); this module is the argument parsing + the file
-//! IO those pure transforms leave to the caller. Both bins (`npm-utils`, `cargo-npm-utils`) are
+//! The library does the heavy lifting ([`crate::registry`], [`crate::install`], [`crate::project`],
+//! and the [`crate::package_json`] manifest/lock writers); this module is the argument parsing + the
+//! file IO those pure transforms leave to the caller. Both bins (`npm-utils`, `cargo-npm-utils`) are
 //! thin shells over [`main_with`].
 
 use std::ffi::OsString;
@@ -33,8 +35,10 @@ mod common;
 mod download;
 mod init;
 mod install;
+mod remove;
 mod resolve;
 mod sbom;
+mod search;
 mod upgrade;
 
 /// This module's ubiquitous fallible return — `()` by default, over the crate [`crate::Error`].
@@ -44,7 +48,7 @@ pub(crate) type Res<T = ()> = crate::Result<T>;
 #[command(
     name = "npm-utils",
     version,
-    about = "Pure-Rust npm registry tools: install · ci · add · init · upgrade · sbom · audit"
+    about = "Pure-Rust npm registry tools: install · ci · add · remove · init · upgrade · search · sbom · audit"
 )]
 struct Cli {
     /// Per-fetch timeout in seconds (default 120) — caps each registry/tarball request, not the whole run
@@ -63,9 +67,9 @@ struct Cli {
 }
 
 /// The shared `--skip-license` / `--no-skip-license` knob for the lockfile-writing verbs
-/// (`install`, `add`, `upgrade`). The default skips license — the faster abbreviated packument —
-/// and `npm-utils sbom` recovers license from each package's package.json; `--no-skip-license`
-/// records it in the lockfile via the full packument.
+/// (`install`, `add`, `remove`, `upgrade`). The default skips license — the faster abbreviated
+/// packument — and `npm-utils sbom` recovers license from each package's package.json;
+/// `--no-skip-license` records it in the lockfile via the full packument.
 #[derive(Args)]
 struct LicenseOpts {
     /// Record each package's license in package-lock.json (fetches the full packument)
@@ -126,6 +130,17 @@ enum Command {
         #[command(flatten)]
         license: LicenseOpts,
     },
+    /// Remove packages from package.json, refresh the lock, reinstall (npm remove)
+    Remove {
+        /// Packages to remove (names)
+        #[arg(required = true)]
+        packages: Vec<String>,
+        /// Project directory
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        #[command(flatten)]
+        license: LicenseOpts,
+    },
     /// Create a package.json (npm init -y)
     Init {
         /// Project directory
@@ -163,6 +178,15 @@ enum Command {
         /// Write the .tgz here (default: <name>-<version>.tgz in the current dir)
         #[arg(long)]
         out: Option<PathBuf>,
+    },
+    /// Search the registry for packages (npm search)
+    Search {
+        /// Search text (package name or keywords)
+        #[arg(required = true)]
+        query: Vec<String>,
+        /// Maximum number of results (1–250)
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
     /// Bill of materials from package-lock.json: license summary, CycloneDX, or SPDX
     Sbom {
@@ -222,6 +246,11 @@ pub fn run(argv: impl IntoIterator<Item = OsString>) -> Res {
             dir,
             license,
         } => add::run(&packages, &dir, license.detail()),
+        Command::Remove {
+            packages,
+            dir,
+            license,
+        } => remove::run(&packages, &dir, license.detail()),
         Command::Init { dir, name } => init::run(&dir, name.as_deref()),
         Command::Upgrade {
             packages,
@@ -230,6 +259,7 @@ pub fn run(argv: impl IntoIterator<Item = OsString>) -> Res {
         } => upgrade::run(&packages, &dir, license.detail()),
         Command::Resolve { name, range } => resolve::run(&name, &range),
         Command::Download { name, range, out } => download::run(&name, &range, out.as_deref()),
+        Command::Search { query, limit } => search::run(&query.join(" "), limit),
         Command::Sbom {
             dir,
             format,
@@ -315,10 +345,13 @@ mod tests {
             osv(&["npm-utils", "install", "--no-lockfile"]),
             osv(&["npm-utils", "ci", "/tmp/x"]),
             osv(&["npm-utils", "add", "lit@^3", "--dir", "/tmp/x"]),
+            osv(&["npm-utils", "remove", "lit", "--dir", "/tmp/x"]),
             osv(&["npm-utils", "init", "--name", "demo"]),
             osv(&["npm-utils", "upgrade"]),
             osv(&["npm-utils", "resolve", "lit", "^3"]),
             osv(&["npm-utils", "download", "ms", "--out", "/tmp/ms.tgz"]),
+            osv(&["npm-utils", "search", "lodash"]),
+            osv(&["npm-utils", "search", "react", "router", "--limit", "5"]),
             osv(&["npm-utils", "sbom", "/tmp/x", "--format", "cyclonedx"]),
             osv(&["npm-utils", "sbom", "--format", "spdx", "--name", "demo"]),
             osv(&["npm-utils", "audit", "/tmp/x"]),
@@ -346,8 +379,10 @@ mod tests {
             Cli::try_parse_from(osv(&["npm-utils", "audit", "--audit-level", "fatal"])).is_err()
         );
         assert!(Cli::try_parse_from(osv(&["npm-utils", "audit", "--sources", "snyk"])).is_err());
-        // `add` requires at least one package.
+        // `add`, `remove`, and `search` each require at least one argument.
         assert!(Cli::try_parse_from(osv(&["npm-utils", "add"])).is_err());
+        assert!(Cli::try_parse_from(osv(&["npm-utils", "remove"])).is_err());
+        assert!(Cli::try_parse_from(osv(&["npm-utils", "search"])).is_err());
         // `install` can't both write only the lock and skip the lock.
         assert!(Cli::try_parse_from(osv(&[
             "npm-utils",
