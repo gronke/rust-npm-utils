@@ -1,26 +1,23 @@
-//! Helpers shared by the verb submodules: manifest read/write, the lock+install [`sync`] that
-//! `add`/`upgrade` share, install reporting, and small parsing utilities.
+//! Helpers shared by the verb submodules: the install-report printer, `name@range` splitting, and
+//! the project's default name. The manifest read/write helpers and the lock+install `sync` now live
+//! in the public [`crate::project`] module (shared with library consumers); the first two are
+//! re-exported here so the verb submodules keep their short `common::` paths.
 
 use std::path::Path;
 
 use serde_json::Value;
 
 use super::Res;
-use crate::install::from_lockfile;
-use crate::package_json::{lock, manifest};
-use crate::registry::{PackumentDetail, Registry, Resolved};
+use crate::registry::{PackumentDetail, Resolved};
 
-/// Make `package-lock.json` + `node_modules/` a function of the manifest: write a fresh v3
-/// lockfile from the resolved registry dependency tree (via [`lock::render_v3_from_manifest`],
-/// licenses and all), then install from it (every tarball's sha512 verified). Non-registry
-/// deps (git/`file:`) are recorded in the manifest but not resolved.
+// Manifest read/write moved to `crate::project` (public API); re-export for the verb submodules.
+pub(super) use crate::project::{read_manifest, write_manifest};
+
+/// Rewrite the lock from the manifest and install, then print the installed tree. The library
+/// [`crate::project::sync`] does the work and returns the packages; this thin wrapper reports them
+/// (the `add` / `install` / `upgrade` verbs share it).
 pub(super) fn sync(dir: &Path, doc: &Value, detail: PackumentDetail) -> Res {
-    let lockfile = dir.join("package-lock.json");
-    std::fs::write(
-        &lockfile,
-        lock::render_v3_from_manifest(doc, &Registry::npm().with_detail(detail))?,
-    )?;
-    report_installed(&from_lockfile(&lockfile, dir)?);
+    report_installed(&crate::project::sync(dir, doc, detail)?);
     Ok(())
 }
 
@@ -32,25 +29,6 @@ pub(super) fn report_installed(installed: &[Resolved]) {
     }
 }
 
-/// Read + parse `<dir>/package.json`, erroring clearly if it is missing or not a JSON object.
-pub(super) fn read_manifest(dir: &Path) -> Res<Value> {
-    let path = dir.join("package.json");
-    let text =
-        std::fs::read_to_string(&path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-    let doc: Value =
-        serde_json::from_str(&text).map_err(|e| format!("parsing {}: {e}", path.display()))?;
-    if !doc.is_object() {
-        return Err(format!("{} is not a JSON object", path.display()).into());
-    }
-    Ok(doc)
-}
-
-/// Write a manifest back as pretty JSON (npm's two-space indent + trailing newline).
-pub(super) fn write_manifest(dir: &Path, doc: &Value) -> Res {
-    std::fs::write(dir.join("package.json"), manifest::to_pretty(doc))?;
-    Ok(())
-}
-
 /// Split `name@range` honoring scoped names: the version separator is the *last* `@` (a leading
 /// `@` is the scope). `lit@^3` → `("lit", "^3")`; `@lit/context@^1` → `("@lit/context", "^1")`;
 /// `lit` → `("lit", None)`.
@@ -58,15 +36,6 @@ pub(super) fn split_name_range(pkg: &str) -> (&str, Option<&str>) {
     match pkg.rfind('@') {
         Some(i) if i > 0 => (&pkg[..i], Some(&pkg[i + 1..])),
         _ => (pkg, None),
-    }
-}
-
-/// For a caret/tilde range, return it with the floor set to `version` (`^3.1.0` + 3.4.2 →
-/// `^3.4.2`). `None` for any other shape (exact pin, `*`, comparator range) — left as written.
-pub(super) fn bump_floor(range: &str, version: &semver::Version) -> Option<String> {
-    match range.chars().next() {
-        Some(prefix @ ('^' | '~')) => Some(format!("{prefix}{version}")),
-        _ => None,
     }
 }
 
@@ -93,16 +62,5 @@ mod tests {
         );
         // A bare scoped name keeps its leading `@` (the scope is not a version marker).
         assert_eq!(split_name_range("@scope/pkg"), ("@scope/pkg", None));
-    }
-
-    #[test]
-    fn bump_floor_only_moves_floating_ranges() {
-        let v = semver::Version::parse("3.4.2").unwrap();
-        assert_eq!(bump_floor("^3.1.0", &v).as_deref(), Some("^3.4.2"));
-        assert_eq!(bump_floor("~3.1.0", &v).as_deref(), Some("~3.4.2"));
-        // Exact pins and any non-^/~ shape are left untouched.
-        assert_eq!(bump_floor("3.1.0", &v), None);
-        assert_eq!(bump_floor("*", &v), None);
-        assert_eq!(bump_floor(">=3 <4", &v), None);
     }
 }

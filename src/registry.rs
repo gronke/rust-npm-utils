@@ -66,6 +66,26 @@ pub struct Resolved {
     pub license: Option<String>,
 }
 
+/// A single npm registry search result (from the `/-/v1/search` endpoint): the package name, its
+/// latest published version, and the descriptive metadata the registry indexes.
+///
+/// `#[non_exhaustive]` like [`Resolved`] — constructed only inside the crate, read by callers.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct SearchResult {
+    pub name: String,
+    /// The latest published version the registry indexes for this package.
+    pub version: String,
+    /// The package's `description`, when it publishes one.
+    pub description: Option<String>,
+    /// The package's keywords (empty when none are published).
+    pub keywords: Vec<String>,
+    /// Publication date of this version (RFC 3339), when the registry reports it.
+    pub date: Option<String>,
+    /// The package homepage (`links.homepage`), when published.
+    pub homepage: Option<String>,
+}
+
 impl Registry {
     /// The public npm registry (`https://registry.npmjs.org`).
     pub fn npm() -> Self {
@@ -122,6 +142,26 @@ impl Registry {
             integrity,
             license,
         })
+    }
+
+    /// Search the registry for `query`, returning up to `limit` results ranked by the registry's own
+    /// relevance score (npm's `/-/v1/search` endpoint). `limit` is clamped to the registry's
+    /// `1..=250` window. Each result carries the package's *latest* version and indexed metadata, not
+    /// a range resolution — follow up with [`resolve`](Self::resolve) to pin a version.
+    pub fn search(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
+        let size = limit.clamp(1, 250);
+        let url = format!(
+            "{}/-/v1/search?text={}&size={size}",
+            self.base_url,
+            encode_query(query)
+        );
+        let bytes = download::fetch(&url)?;
+        let doc: Value = serde_json::from_slice(&bytes)?;
+        Ok(parse_search(&doc))
     }
 
     /// Resolve the transitive dependency graph of `roots` into a **flat** set — one
@@ -267,6 +307,60 @@ fn dependencies_of(doc: &Value, version: &Version) -> Vec<(String, String)> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Parse the registry's `/-/v1/search` response into [`SearchResult`]s, skipping any malformed
+/// entry. The response shape is `{ "objects": [ { "package": { name, version, description,
+/// keywords, date, links: { homepage } } }, … ] }`. Factored out for unit testing without network.
+fn parse_search(doc: &Value) -> Vec<SearchResult> {
+    let Some(objects) = doc.get("objects").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    objects
+        .iter()
+        .filter_map(|obj| {
+            let pkg = obj.get("package")?;
+            let name = pkg.get("name")?.as_str()?.to_string();
+            let string_field = |key: &str| pkg.get(key).and_then(Value::as_str).map(str::to_string);
+            let keywords = pkg
+                .get("keywords")
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|k| k.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let homepage = pkg
+                .get("links")
+                .and_then(|links| links.get("homepage"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            Some(SearchResult {
+                name,
+                version: string_field("version").unwrap_or_default(),
+                description: string_field("description"),
+                keywords,
+                date: string_field("date"),
+                homepage,
+            })
+        })
+        .collect()
+}
+
+/// Percent-encode a search query for use as a URL query-string value: keep the RFC 3986 unreserved
+/// set, `%`-escape everything else (the query may contain spaces, scopes `@`, or slashes).
+fn encode_query(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -483,5 +577,46 @@ mod tests {
             })
             .unwrap_err();
         assert!(err.to_string().contains("version conflict"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_search_extracts_packages_and_skips_malformed() {
+        let doc = json!({
+            "objects": [
+                { "package": {
+                    "name": "lodash",
+                    "version": "4.17.21",
+                    "description": "Lodash modular utilities.",
+                    "keywords": ["util", "functional"],
+                    "date": "2021-02-20T15:42:16.891Z",
+                    "links": { "npm": "https://www.npmjs.com/package/lodash", "homepage": "https://lodash.com/" }
+                }},
+                { "package": { "version": "1.0.0" } }, // no name → skipped
+                { "score": {} }                         // no package → skipped
+            ],
+            "total": 1
+        });
+        let results = parse_search(&doc);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r.name, "lodash");
+        assert_eq!(r.version, "4.17.21");
+        assert_eq!(r.description.as_deref(), Some("Lodash modular utilities."));
+        assert_eq!(r.keywords, ["util", "functional"]);
+        assert_eq!(r.homepage.as_deref(), Some("https://lodash.com/"));
+        assert!(r.date.is_some());
+    }
+
+    #[test]
+    fn parse_search_empty_when_no_objects() {
+        assert!(parse_search(&json!({})).is_empty());
+        assert!(parse_search(&json!({ "objects": "nope" })).is_empty());
+    }
+
+    #[test]
+    fn encode_query_escapes_reserved_characters() {
+        assert_eq!(encode_query("lodash"), "lodash");
+        assert_eq!(encode_query("react dom"), "react%20dom");
+        assert_eq!(encode_query("@lit/context"), "%40lit%2Fcontext");
     }
 }
